@@ -103,6 +103,7 @@ import {
   resolveTaskboardLanguage,
   taskStatusLabel,
   TaskboardLanguageProvider,
+  type TaskboardLanguage,
 } from "./i18n";
 import {
   MAIN_STATUSES,
@@ -739,10 +740,19 @@ export function App() {
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
-  const language = resolveTaskboardLanguage(
+  const [userLanguage, setUserLanguage] = useState<TaskboardLanguage | null>(() => {
+    try {
+      const saved = localStorage.getItem("taskboard_language");
+      return saved ? resolveTaskboardLanguage(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const language = userLanguage ?? resolveTaskboardLanguage(
     hostContext?.language ?? query.get("lang") ?? navigator.language,
   );
   const { locale, text } = getTaskboardI18n(language);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [embeddedFrameChallenge, setEmbeddedFrameChallengeState] = useState("");
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
@@ -1772,6 +1782,23 @@ export function App() {
       window.removeEventListener("keydown", closeProjectMenuWithEscape);
     };
   }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!languageMenuOpen) return;
+    function closeLanguageMenu(event: PointerEvent) {
+      const target = event.target as HTMLElement;
+      if (!target.closest("[data-language-switcher]")) setLanguageMenuOpen(false);
+    }
+    function closeLanguageMenuWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setLanguageMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", closeLanguageMenu);
+    window.addEventListener("keydown", closeLanguageMenuWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeLanguageMenu);
+      window.removeEventListener("keydown", closeLanguageMenuWithEscape);
+    };
+  }, [languageMenuOpen]);
 
   useEffect(() => {
     if (!projectContextMenu) return;
@@ -3580,6 +3607,68 @@ export function App() {
                 <PlusIcon color="currentColor" size={14} />
               </button>
             )}
+            <div className="header-language-switcher" data-language-switcher style={{ position: "relative" }}>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={text("切换语言", "Switch language")}
+                title={text("切换语言", "Switch language")}
+                aria-expanded={languageMenuOpen}
+                onClick={() => setLanguageMenuOpen((current) => !current)}
+              >
+                <span style={{ fontSize: "11px", fontWeight: 600, padding: "0 2px" }}>
+                  {language === "zh-TW" ? "繁" : language === "zh" ? "简" : "EN"}
+                </span>
+              </button>
+              {languageMenuOpen && (
+                <div
+                  className="header-project-menu"
+                  role="menu"
+                  aria-label={text("语言设置", "Language settings")}
+                  style={{ right: 0, left: "auto", minWidth: 140, top: "calc(100% + 4px)" }}
+                >
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={language === "zh-TW"}
+                    onClick={() => {
+                      setUserLanguage("zh-TW");
+                      try { localStorage.setItem("taskboard_language", "zh-TW"); } catch {}
+                      setLanguageMenuOpen(false);
+                    }}
+                  >
+                    <span>繁體中文</span>
+                    {language === "zh-TW" && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={language === "zh"}
+                    onClick={() => {
+                      setUserLanguage("zh");
+                      try { localStorage.setItem("taskboard_language", "zh"); } catch {}
+                      setLanguageMenuOpen(false);
+                    }}
+                  >
+                    <span>简体中文</span>
+                    {language === "zh" && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={language === "en"}
+                    onClick={() => {
+                      setUserLanguage("en");
+                      try { localStorage.setItem("taskboard_language", "en"); } catch {}
+                      setLanguageMenuOpen(false);
+                    }}
+                  >
+                    <span>English</span>
+                    {language === "en" && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -3670,9 +3759,11 @@ export function App() {
                     <div className="gantt-view-menu" role="menu">
                       {GANTT_ZOOM_OPTIONS.map((value) => (
                         <button type="button" role="menuitemradio" aria-checked={ganttZoom === value} className={ganttZoom === value ? "active" : ""} onClick={() => { setGanttZoom(value); setGanttViewMenuOpen(false); }} key={value}>
-                          <span>{language === "zh"
-                            ? { day: "日视图", week: "周视图", month: "月视图" }[value]
-                            : { day: "Day", week: "Week", month: "Month" }[value]}</span>
+                          <span>{language === "en"
+                            ? { day: "Day", week: "Week", month: "Month" }[value]
+                            : language === "zh-TW"
+                            ? { day: "日視圖", week: "週視圖", month: "月視圖" }[value]
+                            : { day: "日视图", week: "周视图", month: "月视图" }[value]}</span>
                           {ganttZoom === value && <LinearIcon name="check" />}
                         </button>
                       ))}

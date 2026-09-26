@@ -69,8 +69,12 @@ function LabelGlyph({ label }: { label: string }) {
 
 function joinSummary(values: string[], noun: string, language: TaskboardLanguage): string | null {
   if (!values.length) return null;
-  if (values.length <= 2) return values.join(language === "zh" ? "、" : ", ");
-  return language === "zh" ? `${values.length} 个${noun}` : `${values.length} ${noun}`;
+  if (values.length <= 2) return values.join(language === "en" ? ", " : "、");
+  return language === "en"
+    ? `${values.length} ${noun}`
+    : language === "zh-TW"
+    ? `${values.length} 個${noun}`
+    : `${values.length} 个${noun}`;
 }
 
 export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort, onSortChange }: TaskFilterMenuProps) {

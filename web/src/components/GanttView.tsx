@@ -203,9 +203,9 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     instance.templates.timeline_cell_class = (_item, date) => dateCellClass(date);
     const monthFormat = (date: Date) => new Intl.DateTimeFormat(i18nRef.current.locale, { year: "numeric", month: "long" }).format(date);
     const dayFormat = (date: Date) => {
-      const weekdayLabels = i18nRef.current.language === "zh"
-        ? ["日", "一", "二", "三", "四", "五", "六"]
-        : ["S", "M", "T", "W", "T", "F", "S"];
+      const weekdayLabels = i18nRef.current.language === "en"
+        ? ["S", "M", "T", "W", "T", "F", "S"]
+        : ["日", "一", "二", "三", "四", "五", "六"];
       return `<span class="gantt-scale-date"><span class="gantt-scale-weekday">${weekdayLabels[date.getDay()]}</span><span class="gantt-scale-day">${date.getDate()}</span></span>`;
     };
     instance.ext.zoom.init({

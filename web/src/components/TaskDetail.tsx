@@ -266,7 +266,7 @@ function activityValue(
   }
   if (field === "labels" && Array.isArray(value)) {
     return value.length > 0
-      ? value.join(language === "zh" ? "、" : ", ")
+      ? value.join(language === "en" ? ", " : "、")
       : text("无标签", "No labels");
   }
   if (field === "assignee" && typeof value === "object") {
@@ -303,7 +303,7 @@ function activityValue(
     const [chineseLabel, englishLabel] = RELATION_LABELS[relation.type];
     return `${text(chineseLabel, englishLabel)} ${relation.externalKey ?? relation.identifier} · ${relation.title}`;
   }
-  if (Array.isArray(value)) return value.join(language === "zh" ? "、" : ", ");
+  if (Array.isArray(value)) return value.join(language === "en" ? ", " : "、");
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -1358,11 +1358,11 @@ export function TaskDetail({
                             <>{text("添加了 ", "added ")}<span className="activity-change-value">{afterValue}</span></>
                           ) : change.field === "relation" && change.after === null ? (
                             <>{text("移除了 ", "removed ")}<span className="activity-change-value">{beforeValue}</span></>
-                          ) : language === "zh" ? (
+                          ) : language !== "en" ? (
                             <>
-                              将{fieldLabel}从
+                              {text("将", "changed ")}{fieldLabel}{text("从", " from ")}
                               <span className="activity-change-value">{beforeValue}</span>
-                              改为
+                              {text("改为", " to ")}
                               <span className="activity-change-value">{afterValue}</span>
                             </>
                           ) : (

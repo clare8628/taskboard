@@ -20,10 +20,10 @@ export function labelColor(name: string): string {
 
 export type LabelTone = "bug" | "feature" | null;
 
-export function labelDisplayName(name: string, language: TaskboardLanguage = "zh"): string {
+export function labelDisplayName(name: string, language: TaskboardLanguage = "zh-TW"): string {
   if (name === "缺陷" || name.toLocaleUpperCase() === "BUG") return "BUG";
-  if (name === "特性" || name === "新功能") return language === "zh" ? "新功能" : "Feature";
-  if (name === "改进") return language === "zh" ? "改进" : "Improvement";
+  if (name === "特性" || name === "新功能") return language === "en" ? "Feature" : "新功能";
+  if (name === "改进" || name === "改進") return language === "en" ? "Improvement" : language === "zh-TW" ? "改進" : "改进";
   return name;
 }
 
@@ -33,7 +33,7 @@ export function labelTone(name: string): LabelTone {
   return null;
 }
 
-export function labelPresentation(name: string, language: TaskboardLanguage = "zh") {
+export function labelPresentation(name: string, language: TaskboardLanguage = "zh-TW") {
   const tone = labelTone(name);
   return {
     name: labelDisplayName(name, language),

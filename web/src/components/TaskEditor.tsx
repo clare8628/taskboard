@@ -52,6 +52,12 @@ import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 
 const RECURRENCE_UNITS: Record<TaskboardLanguage, Record<Recurrence["unit"], string>> = {
+  "zh-TW": {
+    day: "天",
+    week: "週",
+    month: "月",
+    year: "年",
+  },
   zh: {
     day: "天",
     week: "周",
