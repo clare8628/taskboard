@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "board",
+  "name": "taskboard",
   "main": "cloud/src/index.mjs",
   "compatibility_date": "2026-07-24",
   "workers_dev": true,
