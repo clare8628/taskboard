@@ -10,6 +10,7 @@
     "taskctl": "./cli/taskctl.mjs"
   },
   "scripts": {
+    "postinstall": "npm run build:web",
     "codex": "node scripts/codex-injector.mjs --launch --watch --open --port 9231",
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
