@@ -67,24 +67,24 @@ function formatCountdown(seconds: number): string {
 
 export const CLAUDE_AUTOMATION_MODELS: AiChatModel[] = [
   {
-    slug: "claude-3-7-sonnet",
-    displayName: "Claude 3.7 Sonnet (Thinking)",
-    description: "Hybrid reasoning and coding model by Anthropic",
+    slug: "sonnet",
+    displayName: "Claude Sonnet (Default)",
+    description: "State-of-the-art coding and hybrid reasoning model by Anthropic",
     defaultReasoningEffort: "medium",
     supportedReasoningEfforts: ["low", "medium", "high", "max"],
     serviceTiers: [],
   },
   {
-    slug: "claude-3-5-sonnet",
-    displayName: "Claude 3.5 Sonnet",
-    description: "High-capability coding and analysis model",
+    slug: "opus",
+    displayName: "Claude Opus",
+    description: "Most capable model for deep reasoning and complex architecture",
     defaultReasoningEffort: "",
     supportedReasoningEfforts: [],
     serviceTiers: [],
   },
   {
-    slug: "claude-3-5-haiku",
-    displayName: "Claude 3.5 Haiku",
+    slug: "haiku",
+    displayName: "Claude Haiku",
     description: "Fast, cost-efficient model",
     defaultReasoningEffort: "",
     supportedReasoningEfforts: [],

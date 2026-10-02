@@ -53,9 +53,13 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       sessionId,
       "--dangerously-skip-permissions",
     ];
-    if (config.model) {
-      args.push("--model", config.model);
+    let model = config.model || "sonnet";
+    if (/^claude-3/i.test(model)) {
+      if (/opus/i.test(model)) model = "opus";
+      else if (/haiku/i.test(model)) model = "haiku";
+      else model = "sonnet";
     }
+    args.push("--model", model);
     return args;
   }
 
@@ -507,7 +511,10 @@ export class AgentRunner {
         truncateOutput(stdout.trim() || "任務執行完成，無終端額外輸出。"),
       ].join("\n");
     } else {
-      const details = error?.message || stderr.trim() || stdout.trim() || "未知執行錯誤或異常退出";
+      const rawDetails = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n\n");
+      const details = error?.message
+        ? `${error.message}\n\n${rawDetails}`
+        : (rawDetails || "未知執行錯誤或異常退出");
       commentBody = [
         `### ⚠️ ${agentTitle} 執行失敗 (Exit Code: ${exitCode ?? "ERROR"})`,
         "",
