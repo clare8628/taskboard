@@ -1254,6 +1254,11 @@ kbd {
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
 }
 
+.project-automation-status-dot.is-warning {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+}
+
 .project-automation-status-dot.is-offline {
   background: #ef4444;
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);

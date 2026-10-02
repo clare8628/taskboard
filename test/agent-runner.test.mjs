@@ -473,3 +473,50 @@ test("AgentRunner restart terminates active runs and restarts cleanly", async ()
   await runner.close();
 });
 
+test("AgentRunner triggers launchAuth and avoids claiming when agent is unauthenticated", async () => {
+  let launchAuthCalled = null;
+  let taskClaimed = false;
+
+  const runner = new AgentRunner({
+    readClientStorage: async () => ({
+      "taskboard.projectAutomations.v1": JSON.stringify({
+        "proj-unauth": { status: "ACTIVE", agentPlatform: "agy" },
+      }),
+    }),
+    apiBaseUrl: "http://127.0.0.1:47823",
+    fetch: async (url, init = {}) => {
+      const s = String(url);
+      if (s.endsWith("/api/projects")) {
+        return { ok: true, json: async () => ({ projects: [{ id: "proj-unauth", workspacePath: "/work/unauth" }] }) };
+      }
+      if (s.includes("/api/tasks?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tasks: [{ id: "task-unauth", identifier: "UNAUTH-1", projectId: "proj-unauth", status: "todo", version: 1 }],
+          }),
+        };
+      }
+      if (s.endsWith("/move")) {
+        taskClaimed = true;
+        return { ok: true, json: async () => ({ task: { id: "task-unauth", version: 2 } }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+    checkAgentAuth: async () => false,
+  });
+
+  runner.launchAuth = async (platform) => {
+    launchAuthCalled = platform;
+    return { launched: true, method: "test" };
+  };
+
+  await runner.dispatchProject("proj-unauth", { status: "ACTIVE", agentPlatform: "agy" });
+
+  assert.equal(launchAuthCalled, "agy");
+  assert.equal(taskClaimed, false);
+  assert.equal(runner.status().activeRuns.length, 0);
+
+  await runner.close();
+});
+

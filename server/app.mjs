@@ -2225,6 +2225,16 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { success });
       }
 
+      if (pathname === "/api/local/agent-runner/auth") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const body = await readJson(request);
+        if (body.platform !== "claude" && body.platform !== "agy") {
+          throw new ApiError(400, "INVALID_PLATFORM", "platform must be claude or agy");
+        }
+        const result = await agentRunner.launchAuth(body.platform);
+        return sendJson(response, 200, result);
+      }
+
       const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);
       if (projectSummaryRoute) {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);

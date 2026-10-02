@@ -1,8 +1,11 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 import { signalProcessTree } from "../shared/process-tree.mjs";
 
@@ -168,6 +171,8 @@ export class AgentRunner {
     this.processEnv = options.processEnv ?? process.env;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.spawnProcess = options.spawnProcess ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+    this.isCustomSpawnProcess = Boolean(options.spawnProcess);
+    this.checkAgentAuthFn = options.checkAgentAuth ?? null;
 
     this.activeRuns = new Map(); // taskId -> { child, promise, platform, sessionId, startedAt }
     this.projectRuns = new Set(); // projectId
@@ -226,6 +231,118 @@ export class AgentRunner {
     };
   }
 
+  getExecutionEnv() {
+    const env = { ...process.env, ...(this.processEnv || {}) };
+    const home = env.HOME || os.homedir();
+    const extraPaths = [
+      path.join(home, ".local", "bin"),
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin",
+    ];
+    const existing = (env.PATH || "").split(path.delimiter).filter(Boolean);
+    const combined = [...new Set([...extraPaths, ...existing])];
+    env.PATH = combined.join(path.delimiter);
+    return env;
+  }
+
+  async checkAgentAuth(platform, explicitPath = null) {
+    if (this.checkAgentAuthFn) {
+      return this.checkAgentAuthFn(platform, explicitPath);
+    }
+    if (this.isCustomSpawnProcess) {
+      return true;
+    }
+    const executable = resolveAgentExecutable(
+      platform,
+      explicitPath ?? (platform === "claude" ? this.claudeExecutable : this.agyExecutable),
+    );
+
+    if (typeof executable === "string" && executable.startsWith("/mock/")) {
+      return true;
+    }
+
+    try {
+      accessSync(executable, constants.X_OK);
+    } catch {
+      return false;
+    }
+
+    const execEnv = this.getExecutionEnv();
+
+    if (platform === "claude") {
+      let output = "";
+      try {
+        const { stdout } = await execFileAsync(executable, ["auth", "status"], {
+          timeout: 4000,
+          env: execEnv,
+        });
+        output = stdout;
+      } catch (err) {
+        output = err.stdout || "";
+      }
+      const match = output.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          const data = JSON.parse(match[0]);
+          return Boolean(data.loggedIn);
+        } catch {}
+      }
+      return false;
+    }
+
+    if (platform === "agy") {
+      try {
+        const { stdout, stderr } = await execFileAsync(executable, ["models"], {
+          timeout: 4000,
+          env: execEnv,
+        });
+        const combined = `${stdout} ${stderr}`;
+        if (/please sign in/i.test(combined) || /authentication required/i.test(combined)) {
+          return false;
+        }
+        return true;
+      } catch (err) {
+        const combined = `${err.stdout || ""} ${err.stderr || ""} ${err.message || ""}`;
+        if (/please sign in/i.test(combined) || /authentication required/i.test(combined)) {
+          return false;
+        }
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  async launchAuth(platform) {
+    const isMac = process.platform === "darwin";
+    const cmd = platform === "claude" ? "claude auth login" : "agy";
+
+    if (isMac) {
+      try {
+        await execFileAsync("osascript", [
+          "-e",
+          `tell application "Terminal" to do script "${cmd}"`,
+          "-e",
+          'tell application "Terminal" to activate',
+        ]);
+        return { launched: true, method: "terminal", command: cmd };
+      } catch (e) {
+        console.error("[AgentRunner] Failed to launch Terminal via osascript:", e);
+      }
+    } else if (process.platform === "win32") {
+      try {
+        spawn("cmd.exe", ["/c", "start", "cmd.exe", "/k", cmd], { detached: true, stdio: "ignore" }).unref();
+        return { launched: true, method: "terminal", command: cmd };
+      } catch {}
+    }
+
+    return { launched: false, method: "manual", command: cmd };
+  }
+
   async health() {
     const claudePath = resolveAgentExecutable("claude", this.claudeExecutable);
     const agyPath = resolveAgentExecutable("agy", this.agyExecutable);
@@ -242,17 +359,22 @@ export class AgentRunner {
       agyInstalled = true;
     } catch {}
 
+    const [claudeAuth, agyAuth] = await Promise.all([
+      claudeInstalled ? this.checkAgentAuth("claude", claudePath) : Promise.resolve(false),
+      agyInstalled ? this.checkAgentAuth("agy", agyPath) : Promise.resolve(false),
+    ]);
+
     return {
       status: "ready",
       claude: {
         installed: claudeInstalled,
         executable: claudePath,
-        authenticated: claudeInstalled,
+        authenticated: claudeAuth,
       },
       agy: {
         installed: agyInstalled,
         executable: agyPath,
-        authenticated: agyInstalled,
+        authenticated: agyAuth,
       },
       activeRuns: this.status().activeRuns,
       runningProjects: this.status().runningProjects,
@@ -370,6 +492,13 @@ export class AgentRunner {
       }
 
       if (!targetTask || !targetPlatform) return;
+
+      const isAuth = await this.checkAgentAuth(targetPlatform);
+      if (!isAuth) {
+        console.warn(`[AgentRunner] Agent '${targetPlatform}' is not authenticated. Triggering authentication...`);
+        await this.launchAuth(targetPlatform);
+        return;
+      }
 
       // 4. Execute the task
       await this.executeTask({

@@ -284,6 +284,38 @@ export function ProjectAutomationMenu({
     }
   };
 
+  const [authenticating, setAuthenticating] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+
+  const handleAuthenticate = useCallback(async (platform: AutomationProvider) => {
+    if (platform !== "claude" && platform !== "agy") return;
+    setAuthenticating(true);
+    setAuthMessage(text("正在启动终端认证登录…", "Launching terminal authentication…"));
+    try {
+      const res = await fetch(resolveCompanionUrl("api/local/agent-runner/auth"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-taskboard-client": "web-ui",
+        },
+        body: JSON.stringify({ platform }),
+      });
+      if (res.ok) {
+        setAuthMessage(text("已开启终端视窗，请在终端完成登入，系统将自动同步状态…", "Terminal opened. Complete login in terminal; status will sync automatically…"));
+      } else {
+        setAuthMessage(text("启动失败，请手动在终端执行登录命令", "Launch failed; please run login command in terminal"));
+      }
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        await fetchHealth();
+      }
+    } catch {
+      setAuthMessage(text("连接本地伴侣服务失败", "Failed to connect to local companion"));
+    } finally {
+      setAuthenticating(false);
+    }
+  }, [fetchHealth, resolveCompanionUrl, text]);
+
   const isExecuting = Boolean(health?.activeRuns && health.activeRuns.length > 0);
 
   useEffect(() => {
@@ -423,7 +455,10 @@ export function ProjectAutomationMenu({
                   ? "is-offline"
                   : isExecuting
                     ? "is-busy"
-                    : "is-ready"
+                    : (draft.agentPlatform === "claude" && health?.claude.installed && !health.claude.authenticated) ||
+                      (draft.agentPlatform === "agy" && health?.agy.installed && !health.agy.authenticated)
+                      ? "is-warning"
+                      : "is-ready"
               }`}
               aria-hidden="true"
             />
@@ -434,11 +469,15 @@ export function ProjectAutomationMenu({
                   ? text("Agent 正在执行任务…", "Agent is running task…")
                   : draft.agentPlatform === "claude"
                     ? health?.claude.installed
-                      ? text("Claude Code 就绪 (已认证)", "Claude Code ready (authenticated)")
+                      ? health?.claude.authenticated
+                        ? text("Claude Code 就绪 (已认证)", "Claude Code ready (authenticated)")
+                        : text("Claude Code 尚未认证登录", "Claude Code not authenticated")
                       : text("未检测到 claude CLI", "claude CLI not found")
                     : draft.agentPlatform === "agy"
                       ? health?.agy.installed
-                        ? text("AGY 就绪 (已认证)", "AGY ready (authenticated)")
+                        ? health?.agy.authenticated
+                          ? text("AGY 就绪 (已认证)", "AGY ready (authenticated)")
+                          : text("AGY 尚未认证登录", "AGY not authenticated")
                         : text("未检测到 agy CLI", "agy CLI not found")
                       : text("本地伴侣运行正常", "Local companion healthy")}
             </span>
@@ -453,6 +492,31 @@ export function ProjectAutomationMenu({
             {restarting ? text("重启中…", "Restarting…") : text("重启", "Restart")}
           </button>
         </div>
+        {!isExecuting && (
+          (draft.agentPlatform === "claude" && health?.claude.installed && !health.claude.authenticated) ||
+          (draft.agentPlatform === "agy" && health?.agy.installed && !health.agy.authenticated)
+        ) && (
+          <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 12, color: "#f59e0b", display: "flex", alignItems: "center", gap: 4 }}>
+              <span>⚠️</span>
+              <span>{text("该 Agent 尚未登录认证，自动化调度将无法执行。", "Agent is not logged in. Automation cannot run.")}</span>
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              style={{ padding: "5px 10px", fontSize: 12, height: "auto" }}
+              disabled={authenticating}
+              onClick={() => void handleAuthenticate(draft.agentPlatform)}
+            >
+              {authenticating ? text("正在启动认证…", "Launching…") : text("立即启动终端认证登录", "Launch Terminal Login")}
+            </button>
+            {authMessage && (
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary, #6b7280)" }}>
+                {authMessage}
+              </div>
+            )}
+          </div>
+        )}
         {isExecuting && (
           <div className="project-automation-health-actions" style={{ marginTop: 8, display: "flex", gap: 8, padding: "0 12px 12px" }}>
             <button
@@ -527,6 +591,11 @@ export function ProjectAutomationMenu({
               reasoningEffort: nextModel?.defaultReasoningEffort ?? "",
               quotaAware: nextPlatform === "codex" ? draft.quotaAware : false,
             });
+            if (nextPlatform === "claude" && health?.claude.installed && !health.claude.authenticated) {
+              void handleAuthenticate("claude");
+            } else if (nextPlatform === "agy" && health?.agy.installed && !health.agy.authenticated) {
+              void handleAuthenticate("agy");
+            }
           }}
         />
       </div>
@@ -539,10 +608,20 @@ export function ProjectAutomationMenu({
           role="switch"
           aria-checked={draft.enabledByUser}
           disabled={disabled}
-          onClick={() => submitChange({
-            ...draft,
-            enabledByUser: !draft.enabledByUser,
-          })}
+          onClick={() => {
+            const nextEnabled = !draft.enabledByUser;
+            submitChange({
+              ...draft,
+              enabledByUser: nextEnabled,
+            });
+            if (nextEnabled) {
+              if (draft.agentPlatform === "claude" && health?.claude.installed && !health.claude.authenticated) {
+                void handleAuthenticate("claude");
+              } else if (draft.agentPlatform === "agy" && health?.agy.installed && !health.agy.authenticated) {
+                void handleAuthenticate("agy");
+              }
+            }
+          }}
         >
           <span aria-hidden="true" />
         </button>
