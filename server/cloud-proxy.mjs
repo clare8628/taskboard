@@ -283,6 +283,7 @@ export function createCloudProxy({
         method: request.method,
         headers,
         redirect: "manual",
+        signal: request.signal,
       };
       if (request.method !== "GET" && request.method !== "HEAD" && prepared.body !== null) {
         init.body = prepared.body;

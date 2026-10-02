@@ -1481,6 +1481,7 @@ export function createTaskboardServer(options = {}) {
   async function readCloudJson(pathname) {
     const upstream = await cloudProxy.forward(new Request(`http://127.0.0.1${pathname}`, {
       headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(3000),
     }));
     let payload;
     try {
@@ -1852,22 +1853,28 @@ export function createTaskboardServer(options = {}) {
           const config = await cloudConfig.read();
           if (config.remoteUrl) {
             assertLoopbackRequest(request);
-            const shared = await readCloudJson("/api/client-storage");
-            for (const key of Object.keys(entries)) {
-              if (
-                key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
-                || key === "taskboard.projectAutomations.v1"
-              ) {
-                delete entries[key];
+            try {
+              const shared = await readCloudJson("/api/client-storage");
+              if (shared?.entries && typeof shared.entries === "object") {
+                for (const key of Object.keys(entries)) {
+                  if (
+                    key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+                    || key === "taskboard.projectAutomations.v1"
+                  ) {
+                    delete entries[key];
+                  }
+                }
+                for (const [key, value] of Object.entries(shared.entries)) {
+                  if (
+                    key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+                    || key === "taskboard.projectAutomations.v1"
+                  ) {
+                    entries[key] = value;
+                  }
+                }
               }
-            }
-            for (const [key, value] of Object.entries(shared.entries)) {
-              if (
-                key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
-                || key === "taskboard.projectAutomations.v1"
-              ) {
-                entries[key] = value;
-              }
+            } catch {
+              // Ignore if upstream does not provide client-storage entries
             }
           }
           return sendJson(response, 200, { entries });
@@ -2180,6 +2187,18 @@ export function createTaskboardServer(options = {}) {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         assertNoQuery(url.searchParams, "GET /api/local/agent-runner/status");
         return sendJson(response, 200, agentRunner.status());
+      }
+
+      if (pathname === "/api/local/agent-runner/health") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/agent-runner/health");
+        return sendJson(response, 200, await agentRunner.health());
+      }
+
+      if (pathname === "/api/local/agent-runner/restart") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/agent-runner/restart");
+        return sendJson(response, 200, await agentRunner.restart());
       }
 
       if (pathname === "/api/local/agent-runner/dispatch") {
@@ -3250,7 +3269,9 @@ export function createTaskboardServer(options = {}) {
         else server.listen({ fd });
       });
       listening = true;
-      agentRunner.start();
+      if (options.startAgentRunner ?? false) {
+        agentRunner.start();
+      }
       return server.address();
     },
     async close() {

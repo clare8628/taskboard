@@ -431,3 +431,45 @@ test("AgentRunner status reflects active runs and close terminates spawned child
   await dispatchPromise.catch(() => {});
 });
 
+test("AgentRunner health reports executable status and active runs", async () => {
+  const runner = new AgentRunner({
+    apiBaseUrl: "http://127.0.0.1:47823",
+  });
+
+  const health = await runner.health();
+  assert.ok("status" in health);
+  assert.ok("claude" in health);
+  assert.ok("agy" in health);
+  assert.ok(Array.isArray(health.activeRuns));
+  assert.equal(typeof health.claude.installed, "boolean");
+  assert.equal(typeof health.claude.authenticated, "boolean");
+  await runner.close();
+});
+
+test("AgentRunner restart terminates active runs and restarts cleanly", async () => {
+  let childRef = null;
+  const runner = new AgentRunner({
+    readClientStorage: async () => ({}),
+    apiBaseUrl: "http://127.0.0.1:47823",
+    spawnProcess: () => {
+      childRef = new MockChildProcess(0);
+      return childRef;
+    },
+  });
+
+  runner.activeRuns.set("test-task", {
+    child: { kill: (sig) => { childRef = sig; } },
+    platform: "claude",
+    sessionId: "sess-1",
+    startedAt: Date.now(),
+  });
+
+  assert.equal(runner.status().activeRuns.length, 1);
+  const result = await runner.restart();
+  assert.equal(result.restarted, true);
+  assert.equal(childRef, "SIGTERM");
+  assert.equal(runner.status().activeRuns.length, 0);
+
+  await runner.close();
+});
+

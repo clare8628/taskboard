@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LinearIcon } from "./LinearIcon";
 import { ProjectIcon, RecurrenceIcon } from "./SemanticIcons";
@@ -41,6 +41,13 @@ export interface ProjectAutomationMenuProps {
   onOpen: () => void;
   onChange: (options: AutomationOptions) => void;
   onClaimNow?: () => Promise<void>;
+}
+
+export interface AgentHealthInfo {
+  status: "ready" | "offline" | "error";
+  claude: { installed: boolean; executable?: string; authenticated: boolean };
+  agy: { installed: boolean; executable?: string; authenticated: boolean };
+  activeRuns: Array<{ taskId: string; platform: string }>;
 }
 
 function formatCountdown(seconds: number): string {
@@ -195,6 +202,59 @@ export function ProjectAutomationMenu({
 
   const [claimingNow, setClaimingNow] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(() => (draft.intervalMinutes ?? 5) * 60);
+  const [health, setHealth] = useState<AgentHealthInfo | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch(new URL("api/local/agent-runner/health", document.baseURI), {
+        headers: { accept: "application/json", "x-taskboard-client": "web-ui" },
+      });
+      if (res.ok) {
+        const data = await res.json() as AgentHealthInfo;
+        setHealth(data);
+      } else {
+        setHealth({
+          status: "offline",
+          claude: { installed: false, authenticated: false },
+          agy: { installed: false, authenticated: false },
+          activeRuns: [],
+        });
+      }
+    } catch {
+      setHealth({
+        status: "offline",
+        claude: { installed: false, authenticated: false },
+        agy: { installed: false, authenticated: false },
+        activeRuns: [],
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHealth();
+    const interval = setInterval(fetchHealth, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchHealth]);
+
+  const handleRestart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      await fetch(new URL("api/local/agent-runner/restart", document.baseURI), {
+        method: "POST",
+        headers: { "x-taskboard-client": "web-ui" },
+      });
+      await fetchHealth();
+      if (onClaimNow) {
+        await onClaimNow();
+      }
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const isExecuting = Boolean(health?.activeRuns && health.activeRuns.length > 0);
 
   useEffect(() => {
     setSecondsRemaining((draft.intervalMinutes ?? 5) * 60);
@@ -299,11 +359,13 @@ export function ProjectAutomationMenu({
     onChange(next);
   };
 
-  const activeLabel = draft.agentPlatform === "claude"
-    ? `Claude ${countdownText}`
-    : draft.agentPlatform === "agy"
-      ? `AGY ${countdownText}`
-      : `${text("自动认领", "Auto-claim")} ${countdownText}`;
+  const activeLabel = isExecuting
+    ? `${draft.agentPlatform === "claude" ? "Claude" : draft.agentPlatform === "agy" ? "AGY" : "Agent"} ${text("执行中…", "Running…")}`
+    : draft.agentPlatform === "claude"
+      ? `Claude ${countdownText}`
+      : draft.agentPlatform === "agy"
+        ? `AGY ${countdownText}`
+        : `${text("自动认领", "Auto-claim")} ${countdownText}`;
 
   const buttonLabel = idleLabel ?? (status === "ACTIVE" ? activeLabel : text("自动化", "Automation"));
 
@@ -320,6 +382,47 @@ export function ProjectAutomationMenu({
         <span className={status === "ACTIVE" ? "is-active" : "is-paused"}>
           {stateLabel}
         </span>
+      </div>
+
+      <div className="project-automation-health-card">
+        <div className="project-automation-health-header">
+          <div className="project-automation-health-title">
+            <span
+              className={`project-automation-status-dot ${
+                health?.status === "offline"
+                  ? "is-offline"
+                  : isExecuting
+                    ? "is-busy"
+                    : "is-ready"
+              }`}
+              aria-hidden="true"
+            />
+            <span>
+              {health?.status === "offline"
+                ? text("本地伴侣服务未连线", "Local companion offline")
+                : isExecuting
+                  ? text("Agent 正在执行任务…", "Agent is running task…")
+                  : draft.agentPlatform === "claude"
+                    ? health?.claude.installed
+                      ? text("Claude Code 就绪 (已认证)", "Claude Code ready (authenticated)")
+                      : text("未检测到 claude CLI", "claude CLI not found")
+                    : draft.agentPlatform === "agy"
+                      ? health?.agy.installed
+                        ? text("AGY 就绪 (已认证)", "AGY ready (authenticated)")
+                        : text("未检测到 agy CLI", "agy CLI not found")
+                      : text("本地伴侣运行正常", "Local companion healthy")}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="project-automation-restart-btn"
+            disabled={restarting}
+            onClick={() => void handleRestart()}
+            title={text("重启本地 Agent 调度器", "Restart local agent")}
+          >
+            {restarting ? text("重启中…", "Restarting…") : text("重启", "Restart")}
+          </button>
+        </div>
       </div>
 
       <div className="project-automation-field">
@@ -576,11 +679,22 @@ export function ProjectAutomationMenu({
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
+            void fetchHealth();
             onOpen();
           }
           setOpen((current) => !current);
         }}
       >
+        <span
+          className={`project-automation-button-dot ${
+            health?.status === "offline"
+              ? "is-offline"
+              : isExecuting
+                ? "is-busy"
+                : "is-ready"
+          }`}
+          aria-hidden="true"
+        />
         <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
         <span>{buttonLabel}</span>
       </button>

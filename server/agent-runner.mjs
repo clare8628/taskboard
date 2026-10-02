@@ -222,15 +222,64 @@ export class AgentRunner {
     };
   }
 
+  async health() {
+    const claudePath = resolveAgentExecutable("claude", this.claudeExecutable);
+    const agyPath = resolveAgentExecutable("agy", this.agyExecutable);
+
+    let claudeInstalled = false;
+    try {
+      accessSync(claudePath, constants.X_OK);
+      claudeInstalled = true;
+    } catch {}
+
+    let agyInstalled = false;
+    try {
+      accessSync(agyPath, constants.X_OK);
+      agyInstalled = true;
+    } catch {}
+
+    return {
+      status: "ready",
+      claude: {
+        installed: claudeInstalled,
+        executable: claudePath,
+        authenticated: claudeInstalled,
+      },
+      agy: {
+        installed: agyInstalled,
+        executable: agyPath,
+        authenticated: agyInstalled,
+      },
+      activeRuns: this.status().activeRuns,
+      runningProjects: this.status().runningProjects,
+    };
+  }
+
+  async restart() {
+    await this.close();
+    this.closed = false;
+    this.start();
+    void this.checkAndDispatch();
+    return { ...this.status(), restarted: true };
+  }
+
   async checkAndDispatch() {
     if (this.closed) return;
 
     let entries = {};
     try {
-      entries = await this.readClientStorage();
-    } catch (error) {
-      console.error("[AgentRunner] Failed to read client storage:", error);
-      return;
+      const apiBaseUrl = this.getResolvedApiBaseUrl();
+      const res = await this.fetch(`${apiBaseUrl}/api/client-storage`, {
+        headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        entries = payload.entries || {};
+      } else {
+        entries = await this.readClientStorage();
+      }
+    } catch {
+      entries = await this.readClientStorage().catch(() => ({}));
     }
 
     const rawAutomations = entries["taskboard.projectAutomations.v1"];
@@ -273,7 +322,10 @@ export class AgentRunner {
       const project = (projectsPayload.projects || []).find((p) => p.id === projectId);
       if (!project) return;
 
-      const workspacePath = project.workspacePath || config.workspacePath || process.cwd();
+      let workspacePath = project.workspacePath || config.workspacePath || process.cwd();
+      if (typeof workspacePath === "string") {
+        workspacePath = workspacePath.replace(/\\ /g, " ");
+      }
 
       // 2. Fetch todo tasks
       const tasksRes = await this.fetch(
