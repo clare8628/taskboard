@@ -28,6 +28,10 @@ export interface TaskProcessingPresentation {
   completed: number | null;
   total: number | null;
   startedAt: string | null;
+  agentRun?: {
+    platform: string;
+    taskId: string;
+  };
 }
 
 export interface TaskCardPresentation {
@@ -166,6 +170,7 @@ export function taskCardPresentation(
     total: number | null;
     running: boolean;
   } | null | undefined = undefined,
+  agentRun: { platform: string; taskId: string; } | null = null,
 ): TaskCardPresentation {
   const conversations = taskConversations(task, aiThreads);
   let runningAi: TaskConversationItem | undefined;
@@ -199,10 +204,11 @@ export function taskCardPresentation(
     unread,
     processing: {
       running: task.status === "in_progress"
-        && (Boolean(running) || taskNativeSession?.running === true),
+        && (Boolean(running) || taskNativeSession?.running === true || Boolean(agentRun)),
       completed: latestTodo?.completed ?? null,
       total: latestTodo?.total ?? null,
       startedAt: runningAi?.currentRun?.startedAt ?? null,
+      agentRun: agentRun ?? undefined,
     },
   };
 }

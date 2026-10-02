@@ -2561,6 +2561,55 @@ export function App() {
     setOtherTasksTab(otherTaskTabs[0]);
   }, [otherTaskTabsKey, otherTasksAvailable, otherTasksTab]);
 
+  const companionBase = useMemo(() => {
+    const baseOrigin = new URL(document.baseURI).origin;
+    const isLoopback = baseOrigin === "http://127.0.0.1:47823"
+      || baseOrigin === "http://localhost:47823"
+      || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(baseOrigin);
+    return isLoopback ? baseOrigin : "http://127.0.0.1:47823";
+  }, []);
+
+  const [agentHealth, setAgentHealth] = useState<{ activeRuns: { taskId: string, platform: string }[] } | null>(null);
+
+  const fetchAgentHealth = useCallback(async () => {
+    try {
+      const res = await fetch(`${companionBase}/api/local/agent-runner/health`, {
+        headers: { accept: "application/json", "x-taskboard-client": "web-ui" },
+      });
+      if (res.ok) {
+        setAgentHealth(await res.json());
+      } else {
+        setAgentHealth(null);
+      }
+    } catch {
+      setAgentHealth(null);
+    }
+  }, [companionBase]);
+
+  useEffect(() => {
+    void fetchAgentHealth();
+    const timer = setInterval(fetchAgentHealth, 10_000);
+    return () => clearInterval(timer);
+  }, [fetchAgentHealth]);
+
+  useEffect(() => {
+    const handleAgentInput = async (event: Event) => {
+      const customEvent = event as CustomEvent<{ taskId: string, input: string }>;
+      const { taskId, input } = customEvent.detail;
+      try {
+        await fetch(`${companionBase}/api/local/agent-runner/input`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-taskboard-client": "web-ui" },
+          body: JSON.stringify({ taskId, input }),
+        });
+      } catch (e) {
+        console.error("Failed to send input to agent", e);
+      }
+    };
+    window.addEventListener("agent-runner-input", handleAgentInput);
+    return () => window.removeEventListener("agent-runner-input", handleAgentInput);
+  }, [companionBase]);
+
   const aiThreadsByTask = useMemo(() => indexAiThreadsByTask(aiThreads), [aiThreads]);
   const taskPresentations = useMemo(() => Object.fromEntries(tasks.map((task) => {
     const storageKey = issueReadStorageKey(issueReadMode, task);
@@ -2578,8 +2627,10 @@ export function App() {
       runningNativeThreadId,
       hostContext?.threadTodoProgress ?? null,
       taskThreadId ? codexThreadProgress[taskThreadId] ?? null : undefined,
+      agentHealth?.activeRuns.find((run) => run.taskId === task.id) ?? null,
     )];
   })) as Record<string, TaskCardPresentation>, [
+    agentHealth?.activeRuns,
     aiThreadsByTask,
     codexThreadProgress,
     hostContext?.threadId,
@@ -3747,11 +3798,6 @@ export function App() {
               // In cloud mode, requests to /api/local/* on the cloud worker return 404.
               // Derive the companion loopback URL from document.baseURI when running locally,
               // or default to the well-known local companion port for cloud-hosted access.
-              const baseOrigin = new URL(document.baseURI).origin;
-              const isLoopback = baseOrigin === "http://127.0.0.1:47823"
-                || baseOrigin === "http://localhost:47823"
-                || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(baseOrigin);
-              const companionBase = isLoopback ? baseOrigin : "http://127.0.0.1:47823";
               return (
                 <ProjectAutomationMenu
                   automation={selectedProjectAutomation}

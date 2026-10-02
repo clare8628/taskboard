@@ -222,12 +222,44 @@ function ProcessingStatusRow({
   presentation: TaskCardPresentation;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }) {
+  const { text } = useTaskboardI18n();
   const running = presentation.processing.running;
+  const agentRun = presentation.processing.agentRun;
   return (
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
       <ProcessingLabel processing={presentation.processing} />
       <span className="task-processing-spacer" aria-hidden="true" />
+      
+      {agentRun && (
+        <div className="task-processing-actions" style={{ display: "flex", gap: "4px", marginRight: "8px" }}>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ padding: "2px 6px", fontSize: "11px", height: "auto" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent("agent-runner-input", { detail: { taskId: agentRun.taskId, input: "y\n" } }));
+            }}
+            title={text("發送同意 (y) 授權", "Send 'y' to authorize")}
+          >
+            {text("允許(y)", "Approve(y)")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            style={{ padding: "2px 6px", fontSize: "11px", height: "auto" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent("agent-runner-input", { detail: { taskId: agentRun.taskId, input: "\n" } }));
+            }}
+            title={text("發送 Enter 繼續", "Send Enter to continue")}
+          >
+            {text("繼續(Enter)", "Continue(Enter)")}
+          </button>
+        </div>
+      )}
+
       {presentation.conversations.length > 0 && (
         <TaskConversationMenu
           conversations={presentation.conversations}
