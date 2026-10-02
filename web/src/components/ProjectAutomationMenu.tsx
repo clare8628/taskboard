@@ -40,6 +40,20 @@ export interface ProjectAutomationMenuProps {
   unavailableReason: string | null;
   onOpen: () => void;
   onChange: (options: AutomationOptions) => void;
+  onClaimNow?: () => Promise<void>;
+}
+
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return "00:00";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    const remM = m % 60;
+    return `${pad(h)}:${pad(remM)}:${pad(s)}`;
+  }
+  return `${pad(m)}:${pad(s)}`;
 }
 
 export const CLAUDE_AUTOMATION_MODELS: AiChatModel[] = [
@@ -166,6 +180,7 @@ export function ProjectAutomationMenu({
   unavailableReason,
   onOpen,
   onChange,
+  onClaimNow,
 }: ProjectAutomationMenuProps) {
   const { locale, text } = useTaskboardI18n();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -177,6 +192,37 @@ export function ProjectAutomationMenu({
   const [draft, setDraft] = useState<AutomationOptions>(() => automationOptions(models, automation));
   const status = automation?.status ?? "PAUSED";
   const quota = automation?.quota;
+
+  const [claimingNow, setClaimingNow] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(() => (draft.intervalMinutes ?? 5) * 60);
+
+  useEffect(() => {
+    setSecondsRemaining((draft.intervalMinutes ?? 5) * 60);
+  }, [draft.intervalMinutes, status]);
+
+  useEffect(() => {
+    if (status !== "ACTIVE" || !draft.enabledByUser) return;
+    const timer = setInterval(() => {
+      setSecondsRemaining((prev) => (prev <= 1 ? (draft.intervalMinutes ?? 5) * 60 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [draft.enabledByUser, draft.intervalMinutes, status]);
+
+  const handleClaimNow = async () => {
+    if (claimingNow) return;
+    setClaimingNow(true);
+    try {
+      if (onClaimNow) {
+        await onClaimNow();
+      }
+      setSecondsRemaining((draft.intervalMinutes ?? 5) * 60);
+    } finally {
+      setClaimingNow(false);
+    }
+  };
+
+  const countdownText = formatCountdown(secondsRemaining);
+
   const idleLabel = automation?.enabledByUser && automation.idleReason === "checking-todos"
     ? text("正在判断待办", "Checking todos")
     : automation?.enabledByUser && automation.idleReason === "waiting-todos"
@@ -191,7 +237,7 @@ export function ProjectAutomationMenu({
         : automation.quotaAware && (!quota || quota.state === "unknown")
           ? text("额度未知", "Quota unknown")
           : status === "ACTIVE"
-            ? text("运行中", "Running")
+            ? `${text("运行中", "Running")} (${countdownText})`
             : text("已暂停", "Paused"));
 
   const activeModels = getProviderModels(draft.agentPlatform, models);
@@ -254,10 +300,10 @@ export function ProjectAutomationMenu({
   };
 
   const activeLabel = draft.agentPlatform === "claude"
-    ? text("Claude 认领中", "Claude claiming")
+    ? `Claude ${countdownText}`
     : draft.agentPlatform === "agy"
-      ? text("AGY 认领中", "AGY claiming")
-      : text("自动认领中", "Auto-claiming");
+      ? `AGY ${countdownText}`
+      : `${text("自动认领", "Auto-claim")} ${countdownText}`;
 
   const buttonLabel = idleLabel ?? (status === "ACTIVE" ? activeLabel : text("自动化", "Automation"));
 
@@ -334,6 +380,28 @@ export function ProjectAutomationMenu({
           <span aria-hidden="true" />
         </button>
       </div>
+
+      {status === "ACTIVE" && (
+        <div className="project-automation-countdown-banner">
+          <div className="project-automation-countdown-info">
+            <span className="project-automation-countdown-title">
+              {text("下次认领倒数", "Next claim in")}
+            </span>
+            <span className="project-automation-countdown-clock">
+              {countdownText}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="project-automation-claim-now-btn"
+            disabled={claimingNow}
+            onClick={() => void handleClaimNow()}
+            title={text("立即检查待办并执行认领", "Check todos and claim now")}
+          >
+            {claimingNow ? text("检查中…", "Checking…") : text("立即认领", "Claim now")}
+          </button>
+        </div>
+      )}
 
       {draft.agentPlatform === "codex" ? (
         <>

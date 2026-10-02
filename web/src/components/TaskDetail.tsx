@@ -1,4 +1,10 @@
-import { agentPlatformLabel, sessionResumeCommand } from "../agentSessions";
+import {
+  agentPlatformLabel,
+  sessionResumeCommand,
+  getTaskAgentPlatform,
+  setTaskAgentPlatform,
+  type AutomationProvider,
+} from "../agentSessions";
 import {
   appendUnreferencedAttachments,
   resolveInlineAttachments,
@@ -428,7 +434,7 @@ export function TaskDetail({
   );
   const [editingDescription, setEditingDescription] = useState(false);
   const [propertyMenu, setPropertyMenu] = useState<
-    "status" | "priority" | "assignee" | "labels" | "development" | "recurrence" | null
+    "status" | "priority" | "assignee" | "labels" | "agent" | "development" | "recurrence" | null
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -1813,6 +1819,48 @@ export function TaskDetail({
                 onChange={(nextLabels) => void saveTask({ labels: nextLabels }, "labels")}
                 onCreateLabel={onCreateLabel}
                 onDeleteLabel={currentTask.source === "jira" ? undefined : onDeleteLabel}
+              />
+            </div>
+            <div className="detail-property-row agent-property">
+              <span className="detail-property-icon" aria-hidden="true">
+                <LinearIcon name="terminal" />
+              </span>
+              <span className="detail-property-label">{text("执行代理", "Agent")}</span>
+              <TaskPropertyPicker
+                value={getTaskAgentPlatform(currentTask.labels) ?? ""}
+                options={[
+                  {
+                    value: "",
+                    label: text("项目默认", "Project default"),
+                    icon: <LinearIcon name="folder" />,
+                  },
+                  {
+                    value: "claude",
+                    label: "Claude Code (CLI)",
+                    icon: <LinearIcon name="terminal" />,
+                  },
+                  {
+                    value: "agy",
+                    label: "Google Antigravity (AGY)",
+                    icon: <LinearIcon name="terminal" />,
+                  },
+                  {
+                    value: "codex",
+                    label: "Codex (ChatGPT Desktop)",
+                    icon: <ProjectIcon color="currentColor" size={14} />,
+                  },
+                ]}
+                open={propertyMenu === "agent"}
+                disabled={currentTask.source === "jira" || savingProperty === "labels"}
+                className="detail-property-picker"
+                triggerClassName="detail-property-trigger"
+                ariaLabel={text("执行代理", "Agent provider")}
+                onOpenChange={(open) => setPropertyMenu(open ? "agent" : null)}
+                onChange={(value) => {
+                  const targetPlatform = (value || null) as AutomationProvider | null;
+                  const nextLabels = setTaskAgentPlatform(currentTask.labels, targetPlatform);
+                  void saveTask({ labels: nextLabels }, "labels");
+                }}
               />
             </div>
             <div className="detail-property-row development-property">

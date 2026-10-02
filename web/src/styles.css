@@ -1161,6 +1161,59 @@ kbd {
   color: var(--danger);
 }
 
+.project-automation-countdown-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.project-automation-countdown-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-automation-countdown-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.project-automation-countdown-clock {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  letter-spacing: 0.5px;
+}
+
+.project-automation-claim-now-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.project-automation-claim-now-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.project-automation-claim-now-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .board-setting-switch {
   position: relative;
   width: 34px;

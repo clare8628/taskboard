@@ -15,12 +15,18 @@ export const DEFAULT_LABELS = [
 ] as const;
 
 export function labelColor(name: string): string {
+  if (/^agent:claude$/i.test(name)) return "#d97706";
+  if (/^agent:agy$/i.test(name)) return "#6366f1";
+  if (/^agent:codex$/i.test(name)) return "#10b981";
   return DEFAULT_LABELS.find((label) => label.name === name)?.color ?? "#8b8d92";
 }
 
 export type LabelTone = "bug" | "feature" | null;
 
 export function labelDisplayName(name: string, language: TaskboardLanguage = "zh-TW"): string {
+  if (/^agent:claude$/i.test(name)) return "Claude";
+  if (/^agent:agy$/i.test(name)) return "AGY";
+  if (/^agent:codex$/i.test(name)) return "Codex";
   if (name === "缺陷" || name.toLocaleUpperCase() === "BUG") return "BUG";
   if (name === "特性" || name === "新功能") return language === "en" ? "Feature" : "新功能";
   if (name === "改进" || name === "改進") return language === "en" ? "Improvement" : language === "zh-TW" ? "改進" : "改进";

@@ -25,10 +25,16 @@ import {
   LabelIcon,
   NewConversationIcon,
   PriorityIcon,
+  ProjectIcon,
   StatusIcon,
 } from "./SemanticIcons";
+import {
+  getTaskAgentPlatform,
+  setTaskAgentPlatform,
+  type AutomationProvider,
+} from "../agentSessions";
 
-type SubmenuName = "status" | "priority" | "labels" | "copy";
+type SubmenuName = "status" | "priority" | "labels" | "agent" | "copy";
 
 interface TaskContextMenuProps {
   task: Task;
@@ -356,6 +362,45 @@ export function TaskContextMenu({
                 label={text("在编辑器中管理…", "Manage in editor…")}
                 icon={<EditIcon color="currentColor" />}
                 onClick={() => closeThen(() => onEdit(task))}
+              />
+            </div>
+          )}
+        </MenuItem>
+
+        <MenuItem
+          label={text("执行代理", "Agent provider")}
+          icon={<LinearIcon name="terminal" />}
+          submenu="agent"
+          submenuOpen={submenu === "agent"}
+          rootShortcut="a"
+          onPointerEnter={() => scheduleSubmenu("agent")}
+          onClick={() => openSubmenu("agent", true)}
+        >
+          {submenu === "agent" && (
+            <div className="context-submenu" role="menu" data-submenu-panel="agent" style={{ "--submenu-shift": `${submenuShift}px` } as CSSProperties}>
+              <MenuItem
+                label={text("项目默认", "Project default")}
+                icon={<LinearIcon name="folder" />}
+                checked={getTaskAgentPlatform(task.labels) === null}
+                onClick={() => closeThen(() => onLabelsChange(task, setTaskAgentPlatform(task.labels, null)))}
+              />
+              <MenuItem
+                label="Claude Code (CLI)"
+                icon={<LinearIcon name="terminal" />}
+                checked={getTaskAgentPlatform(task.labels) === "claude"}
+                onClick={() => closeThen(() => onLabelsChange(task, setTaskAgentPlatform(task.labels, "claude")))}
+              />
+              <MenuItem
+                label="Google Antigravity (AGY)"
+                icon={<LinearIcon name="terminal" />}
+                checked={getTaskAgentPlatform(task.labels) === "agy"}
+                onClick={() => closeThen(() => onLabelsChange(task, setTaskAgentPlatform(task.labels, "agy")))}
+              />
+              <MenuItem
+                label="Codex (ChatGPT Desktop)"
+                icon={<ProjectIcon color="currentColor" size={14} />}
+                checked={getTaskAgentPlatform(task.labels) === "codex"}
+                onClick={() => closeThen(() => onLabelsChange(task, setTaskAgentPlatform(task.labels, "codex")))}
               />
             </div>
           )}

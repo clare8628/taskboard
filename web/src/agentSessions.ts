@@ -24,3 +24,25 @@ export function sessionResumeCommand(platform: AgentPlatform | "codex", sessionI
     case "grok": return `grok --resume ${argument}`;
   }
 }
+
+export type AutomationProvider = "codex" | "claude" | "agy";
+
+export function getTaskAgentPlatform(labels: string[] = []): AutomationProvider | null {
+  for (const label of labels) {
+    if (/^agent:claude$/i.test(label)) return "claude";
+    if (/^agent:agy$/i.test(label)) return "agy";
+    if (/^agent:codex$/i.test(label)) return "codex";
+  }
+  return null;
+}
+
+export function setTaskAgentPlatform(
+  labels: string[] = [],
+  platform: AutomationProvider | null,
+): string[] {
+  const filtered = labels.filter((label) => !/^agent:(claude|agy|codex)$/i.test(label));
+  if (platform) {
+    return [...filtered, `agent:${platform}`];
+  }
+  return filtered;
+}

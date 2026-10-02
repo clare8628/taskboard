@@ -3752,6 +3752,16 @@ export function App() {
                 unavailableReason={automationProjectContext.unavailableReason}
                 onOpen={() => void reconcileProjectAutomation()}
                 onChange={(options) => void saveProjectAutomation(options)}
+                onClaimNow={async () => {
+                  try {
+                    await fetch(resolveTaskboardUrl("/api/local/agent-runner/dispatch"), {
+                      method: "POST",
+                      headers: { "x-taskboard-client": "web-ui" },
+                    });
+                  } catch (_) {
+                    // Best effort local runner trigger
+                  }
+                }}
               />
             )}
             {isJiraProject && (

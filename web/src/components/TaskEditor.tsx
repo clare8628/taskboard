@@ -28,12 +28,18 @@ import { LabelPicker } from "./LabelPicker";
 import { IssuePickerContent } from "./IssueRelations";
 import { LinearIcon } from "./LinearIcon";
 import {
+  getTaskAgentPlatform,
+  setTaskAgentPlatform,
+  type AutomationProvider,
+} from "../agentSessions";
+import {
   AttachmentIcon,
   BranchIcon,
   DueDateIcon,
   MoreIcon,
   PlusIcon,
   PriorityIcon,
+  ProjectIcon,
   RecurrenceIcon,
   RelationIcon,
   StatusIcon,
@@ -200,7 +206,7 @@ export function TaskEditor({
   const [relatedIds, setRelatedIds] = useState<string[]>(initialDraft?.relations.relatedIds ?? []);
   const [subIssueIds, setSubIssueIds] = useState<string[]>(initialDraft?.relations.subIssueIds ?? []);
   const [createMore, setCreateMore] = useState(false);
-  const [menu, setMenu] = useState<"project" | "status" | "priority" | "assignee" | "labels" | "development" | "more" | "due" | "recurrence" | null>(null);
+  const [menu, setMenu] = useState<"project" | "status" | "priority" | "assignee" | "labels" | "agent" | "development" | "more" | "due" | "recurrence" | null>(null);
   const [relationMenu, setRelationMenu] = useState<DraftRelationMenu | null>(null);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ right: number; bottom: number } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -611,6 +617,39 @@ export function TaskEditor({
               onOpenChange={(open) => setMenu(open ? "labels" : null)}
               onChange={setSelectedLabels}
               onCreateLabel={onCreateLabel}
+            />
+            <TaskPropertyPicker
+              value={getTaskAgentPlatform(selectedLabels) ?? ""}
+              options={[
+                {
+                  value: "",
+                  label: text("项目默认代理", "Project default agent"),
+                  icon: <LinearIcon name="folder" />,
+                },
+                {
+                  value: "claude",
+                  label: "Claude Code (CLI)",
+                  icon: <LinearIcon name="terminal" />,
+                },
+                {
+                  value: "agy",
+                  label: "Google Antigravity (AGY)",
+                  icon: <LinearIcon name="terminal" />,
+                },
+                {
+                  value: "codex",
+                  label: "Codex (ChatGPT Desktop)",
+                  icon: <ProjectIcon color="currentColor" size={14} />,
+                },
+              ]}
+              open={menu === "agent"}
+              triggerClassName="property-control"
+              ariaLabel={text("执行代理", "Agent provider")}
+              onOpenChange={(open) => setMenu(open ? "agent" : null)}
+              onChange={(value) => {
+                const targetPlatform = (value || null) as AutomationProvider | null;
+                setSelectedLabels(setTaskAgentPlatform(selectedLabels, targetPlatform));
+              }}
             />
 
             <TaskPropertyPicker
