@@ -246,7 +246,9 @@ export function ProjectAutomationMenu({
   }, [open, pickerMenu]);
 
   const submitChange = (next: AutomationOptions) => {
-    if (disabled) return;
+    if (pending) return;
+    const nextIsCodexUnavailable = next.agentPlatform === "codex" && Boolean(unavailableReason);
+    if (nextIsCodexUnavailable && next.agentPlatform === draft.agentPlatform) return;
     setDraft(next);
     onChange(next);
   };

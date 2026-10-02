@@ -453,10 +453,6 @@ function readProjectAutomations(): ProjectAutomations {
           : "codex";
       if (
         (candidate.automationId !== undefined && typeof candidate.automationId !== "string")
-        || typeof candidate.codexProjectId !== "string"
-        || (candidate.codexProjectKind !== "local" && candidate.codexProjectKind !== "remote")
-        || typeof candidate.codexHostId !== "string"
-        || typeof candidate.workspacePath !== "string"
         || (candidate.status !== "ACTIVE" && candidate.status !== "PAUSED")
         || !isAutomationIntervalMinutes(candidate.intervalMinutes ?? 5)
         || typeof model !== "string"
@@ -470,10 +466,10 @@ function readProjectAutomations(): ProjectAutomations {
       result[projectId] = {
         automationId: candidate.automationId ?? (candidate.status === "ACTIVE" ? `${agentPlatform}-auto-${projectId}` : undefined),
         agentPlatform,
-        codexProjectId: candidate.codexProjectId,
-        codexProjectKind: candidate.codexProjectKind,
-        codexHostId: candidate.codexHostId,
-        workspacePath: candidate.workspacePath,
+        codexProjectId: typeof candidate.codexProjectId === "string" ? candidate.codexProjectId : projectId,
+        codexProjectKind: candidate.codexProjectKind === "remote" ? "remote" : "local",
+        codexHostId: typeof candidate.codexHostId === "string" ? candidate.codexHostId : "local",
+        workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
         status: candidate.status,
         enabledByUser,
         quotaAware,
@@ -1684,10 +1680,44 @@ export function App() {
   ]);
 
   const saveProjectAutomation = useCallback((options: ProjectAutomationOptions) => {
-    if (!automationRequestContext) return;
+    if (!selectedProject) return;
+    const targetPlatform = options.agentPlatform ?? "codex";
+    let context = automationRequestContext;
+    if (!context) {
+      const workspacePath = deviceWorkspacePaths[selectedProject.id]
+        ?? selectedProject.workspacePath
+        ?? "";
+      context = {
+        taskboardProjectId: selectedProject.id,
+        codexProjectId: selectedProject.id,
+        codexProjectKind: "local",
+        codexHostId: "local",
+        projectName: selectedProject.name,
+        workspacePath,
+        remoteProjects: [],
+        skillPath: manageTaskboardSkillPath ?? "",
+      };
+      if (targetPlatform === "codex") {
+        writeProjectAutomation(selectedProject.id, {
+          automationId: `codex-auto-${selectedProject.id}`,
+          agentPlatform: "codex",
+          codexProjectId: selectedProject.id,
+          codexProjectKind: "local",
+          codexHostId: "local",
+          workspacePath,
+          status: "PAUSED",
+          enabledByUser: false,
+          quotaAware: options.quotaAware,
+          intervalMinutes: options.intervalMinutes,
+          model: options.model,
+          reasoningEffort: options.reasoningEffort,
+        });
+        return;
+      }
+    }
     const queuedSave = {
-      projectId: automationRequestContext.taskboardProjectId,
-      context: automationRequestContext,
+      projectId: selectedProject.id,
+      context,
       options,
     };
     queuedAutomationSavesRef.current.set(queuedSave.projectId, queuedSave);
@@ -1696,7 +1726,11 @@ export function App() {
     }
   }, [
     automationRequestContext,
+    deviceWorkspacePaths,
     drainQueuedAutomationSaves,
+    manageTaskboardSkillPath,
+    selectedProject,
+    writeProjectAutomation,
   ]);
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
