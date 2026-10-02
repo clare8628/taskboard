@@ -241,7 +241,7 @@ function ProcessingStatusRow({
               e.stopPropagation();
               window.dispatchEvent(new CustomEvent("agent-runner-input", { detail: { taskId: agentRun.taskId, input: "y\n" } }));
             }}
-            title={text("發送同意 (y) 授權", "Send 'y' to authorize")}
+            title={text("發送同意 (y) 授權（系統亦會自動應答）", "Send 'y' to authorize (auto-approved automatically)")}
           >
             {text("允許(y)", "Approve(y)")}
           </button>
@@ -253,7 +253,7 @@ function ProcessingStatusRow({
               e.stopPropagation();
               window.dispatchEvent(new CustomEvent("agent-runner-input", { detail: { taskId: agentRun.taskId, input: "\n" } }));
             }}
-            title={text("發送 Enter 繼續", "Send Enter to continue")}
+            title={text("發送 Enter 繼續（系統亦會自動應答）", "Send Enter to continue (auto-approved automatically)")}
           >
             {text("繼續(Enter)", "Continue(Enter)")}
           </button>

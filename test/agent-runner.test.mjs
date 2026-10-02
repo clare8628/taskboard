@@ -6,8 +6,10 @@ import {
   AgentRunner,
   buildAgentCliArgs,
   buildAgentTaskPrompt,
+  detectInteractivePrompt,
   evaluateTaskEligibility,
   resolveAgentExecutable,
+  stripAnsi,
 } from "../server/agent-runner.mjs";
 
 test("resolveAgentExecutable returns explicit path or env override", () => {
@@ -533,4 +535,111 @@ test("AgentRunner triggers launchAuth and avoids claiming when agent is unauthen
 
   await runner.close();
 });
+
+test("stripAnsi removes color and control sequences", () => {
+  const colored = "\u001b[32mSuccess\u001b[39m and \u001b[1mBold\u001b[22m";
+  assert.equal(stripAnsi(colored), "Success and Bold");
+  assert.equal(stripAnsi(""), "");
+  assert.equal(stripAnsi(null), "");
+});
+
+test("detectInteractivePrompt identifies yes/no and continue prompts", () => {
+  const y1 = detectInteractivePrompt("Do you want to proceed? [y/N]");
+  assert.equal(y1?.type, "approve");
+  assert.equal(y1?.input, "y\n");
+
+  const y2 = detectInteractivePrompt("Overwrite /path/file.js? (y/n)");
+  assert.equal(y2?.type, "approve");
+  assert.equal(y2?.input, "y\n");
+
+  const y3 = detectInteractivePrompt("Ok to proceed? (y)");
+  assert.equal(y3?.type, "approve");
+
+  const y4 = detectInteractivePrompt("是否確定要覆蓋此檔案？ [y/N]");
+  assert.equal(y4?.type, "approve");
+
+  const c1 = detectInteractivePrompt("Press Enter to continue...");
+  assert.equal(c1?.type, "continue");
+  assert.equal(c1?.input, "\n");
+
+  const c2 = detectInteractivePrompt("請按 Enter 鍵繼續...");
+  assert.equal(c2?.type, "continue");
+
+  const normal = detectInteractivePrompt("Compiled successfully in 120ms.\nAll 15 tests passed.");
+  assert.equal(normal, null);
+});
+
+test("AgentRunner auto-responds to interactive prompts when autoApprovePrompts is enabled", async () => {
+  const mockChild = new EventEmitter();
+  let stdinReceived = "";
+  mockChild.stdin = {
+    writable: true,
+    write: (data) => {
+      stdinReceived += data;
+      return true;
+    },
+  };
+  mockChild.stdout = new EventEmitter();
+  mockChild.stderr = new EventEmitter();
+
+  let commentsPosted = [];
+
+  const runner = new AgentRunner({
+    readClientStorage: async () => ({
+      "taskboard.projectAutomations.v1": JSON.stringify({
+        "proj-auto": { status: "ACTIVE", agentPlatform: "claude", autoApprovePrompts: true },
+      }),
+    }),
+    apiBaseUrl: "http://127.0.0.1:47823",
+    spawnProcess: () => mockChild,
+    fetch: async (url, init = {}) => {
+      const s = String(url);
+      if (s.endsWith("/api/projects")) {
+        return { ok: true, json: async () => ({ projects: [{ id: "proj-auto", workspacePath: "/work/auto" }] }) };
+      }
+      if (s.includes("/api/tasks?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tasks: [{ id: "task-auto-1", identifier: "AUTO-1", projectId: "proj-auto", status: "todo", version: 1 }],
+          }),
+        };
+      }
+      if (s.endsWith("/move")) {
+        return { ok: true, json: async () => ({ task: { id: "task-auto-1", version: 2 } }) };
+      }
+      if (s.includes("/comments")) {
+        commentsPosted.push(JSON.parse(init.body || "{}"));
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+    checkAgentAuth: async () => true,
+  });
+
+  const dispatchPromise = runner.dispatchProject("proj-auto", {
+    status: "ACTIVE",
+    agentPlatform: "claude",
+    autoApprovePrompts: true,
+  });
+
+  // Wait a tick for spawn
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Simulate prompt output
+  mockChild.stdout.emit("data", Buffer.from("Need to install vite. Ok to proceed? (y) "));
+
+  // Process completes
+  await new Promise((r) => setTimeout(r, 50));
+  mockChild.emit("close", 0, null);
+
+  await dispatchPromise;
+
+  assert.equal(stdinReceived, "y\n");
+  assert.equal(commentsPosted.length > 0, true);
+  assert.match(commentsPosted[0].body, /自動授權應答/);
+
+  await runner.close();
+});
+
 

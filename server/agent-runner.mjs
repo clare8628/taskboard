@@ -45,6 +45,57 @@ export function resolveAgentExecutable(platform, explicit = null) {
 }
 
 /**
+ * Strip standard ANSI escape codes from terminal output.
+ */
+export function stripAnsi(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+}
+
+/**
+ * Detect interactive prompts that wait for user confirmation or continuation.
+ */
+export function detectInteractivePrompt(rawText) {
+  if (!rawText || typeof rawText !== "string") return null;
+  const clean = stripAnsi(rawText).trim();
+  if (!clean) return null;
+
+  const tail = clean.slice(-400);
+
+  // 1. Enter / Continue prompts
+  if (
+    /press\s+(?:any\s+key|enter|return|<enter>|\[enter\])\s+to\s+continue/i.test(tail) ||
+    /hit\s+(?:enter|return)\s+to\s+continue/i.test(tail) ||
+    /請?按\s*(?:enter|return|回車|任意鍵)\s*(?:鍵)?繼續/i.test(tail) ||
+    /--\s*more\s*--/i.test(tail)
+  ) {
+    return {
+      type: "continue",
+      input: "\n",
+      promptSnippet: tail.slice(-80),
+    };
+  }
+
+  // 2. Approve / Yes-No prompts
+  if (
+    /(?:\[y\/n\]|\[y\/N\]|\[Y\/n\]|\(y\/n\)|\(y\/N\)|\(Y\/n\)|\(yes\/no\)|\[yes\/no\])\s*[:?]?\s*$/i.test(tail) ||
+    /(?:proceed|continue|overwrite|are you sure|confirm|do you want to|install anyway)\b[^\n\r]*\?\s*$/i.test(tail) ||
+    /(?:是否確定|要繼續嗎|確定執行|是否覆蓋)[^\n\r]*[?？]\s*$/i.test(tail) ||
+    /Ok to proceed\?\s*(?:\(y\)|\[y\])?/i.test(tail) ||
+    /Press y to (?:confirm|continue|proceed)/i.test(tail) ||
+    /\[y\/n\/[a-z\/?]+\]\s*[:?]?\s*$/i.test(tail)
+  ) {
+    return {
+      type: "approve",
+      input: "y\n",
+      promptSnippet: tail.slice(-80),
+    };
+  }
+
+  return null;
+}
+
+/**
  * Build CLI arguments for the target agent platform.
  */
 export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) {
@@ -595,6 +646,42 @@ export class AgentRunner {
       startedAt: Date.now(),
     };
 
+    const autoApprove = config?.autoApprovePrompts !== false;
+    let autoResponsesCount = 0;
+    let rollingOutput = "";
+    let lastAutoResponseAt = 0;
+    let lastPromptSnippet = "";
+
+    const checkAndAutoRespond = (chunkStr, childProcess) => {
+      rollingOutput += chunkStr;
+      if (rollingOutput.length > 3000) {
+        rollingOutput = rollingOutput.slice(-3000);
+      }
+
+      if (!autoApprove) return;
+
+      const detected = detectInteractivePrompt(rollingOutput);
+      if (detected) {
+        const now = Date.now();
+        // Cooldown: at least 1200ms between auto-responses unless prompt snippet changed
+        if (now - lastAutoResponseAt > 1200 || lastPromptSnippet !== detected.promptSnippet) {
+          if (childProcess && childProcess.stdin && childProcess.stdin.writable) {
+            try {
+              childProcess.stdin.write(detected.input);
+              lastAutoResponseAt = now;
+              lastPromptSnippet = detected.promptSnippet;
+              autoResponsesCount++;
+              console.log(
+                `[AgentRunner] Auto-responded (${detected.type}) to prompt: "${detected.promptSnippet.replace(/\s+/g, " ")}" for task ${task.id}`,
+              );
+            } catch (err) {
+              console.error("[AgentRunner] Failed to auto-respond to child stdin:", err);
+            }
+          }
+        }
+      }
+    };
+
     runState.promise = new Promise((resolve) => {
       let stdout = "";
       let stderr = "";
@@ -609,10 +696,14 @@ export class AgentRunner {
         runState.child = child;
 
         child.stdout?.on("data", (chunk) => {
-          stdout += chunk.toString("utf8");
+          const str = chunk.toString("utf8");
+          stdout += str;
+          checkAndAutoRespond(str, child);
         });
         child.stderr?.on("data", (chunk) => {
-          stderr += chunk.toString("utf8");
+          const str = chunk.toString("utf8");
+          stderr += str;
+          checkAndAutoRespond(str, child);
         });
         child.on("error", (err) => {
           errorOccurred = err;
@@ -649,6 +740,7 @@ export class AgentRunner {
         "",
         `- **會話識別碼 (Session ID)**: \`${sessionId}\``,
         `- **終端接續命令**: \`${resumeCommand}\``,
+        ...(autoResponsesCount > 0 ? [`- **自動授權應答 (Auto-Approve)**: 執行中自動回應了 ${autoResponsesCount} 次互動確認提示`] : []),
         "",
         "---",
         "",

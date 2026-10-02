@@ -19,6 +19,7 @@ export interface AutomationOptions {
   intervalMinutes: IntervalMinutes;
   model: string;
   reasoningEffort: string;
+  autoApprovePrompts?: boolean;
 }
 
 export interface AutomationState extends AutomationOptions {
@@ -186,6 +187,7 @@ function automationOptions(
     intervalMinutes: automation?.intervalMinutes ?? 5,
     model: model?.slug ?? "",
     reasoningEffort: reasoningEffort ?? "",
+    autoApprovePrompts: automation?.autoApprovePrompts ?? true,
   };
 }
 
@@ -715,6 +717,30 @@ export function ProjectAutomationMenu({
             "Google Antigravity mode: automatically invokes local agy CLI using Google account authentication.",
           )}
         </p>
+      )}
+
+      {(draft.agentPlatform === "claude" || draft.agentPlatform === "agy") && (
+        <div className="project-automation-switch" style={{ alignItems: "flex-start", marginTop: "4px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+            <span>{text("自動核准終端提示", "Auto-approve CLI prompts")}</span>
+            <span style={{ fontSize: "11px", color: "var(--taskboard-muted, #888)", lineHeight: "1.3" }}>
+              {text("自動應答 (y/n) 與繼續等待提示，無人值守自主執行", "Auto-respond to (y/n) and continue prompts")}
+            </span>
+          </div>
+          <button
+            type="button"
+            className={`board-setting-switch${draft.autoApprovePrompts !== false ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={draft.autoApprovePrompts !== false}
+            disabled={disabled}
+            onClick={() => submitChange({
+              ...draft,
+              autoApprovePrompts: draft.autoApprovePrompts === false,
+            })}
+          >
+            <span aria-hidden="true" />
+          </button>
+        </div>
       )}
 
       <div className="project-automation-field">
