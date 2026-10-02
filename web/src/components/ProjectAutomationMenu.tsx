@@ -50,7 +50,7 @@ export interface AgentHealthInfo {
   status: "ready" | "offline" | "error";
   claude: { installed: boolean; executable?: string; authenticated: boolean };
   agy: { installed: boolean; executable?: string; authenticated: boolean };
-  activeRuns: Array<{ taskId: string; platform: string }>;
+  activeRuns: Array<{ taskId: string; platform: string; lastLine?: string | null; lastOutputAt?: number | null; startedAt?: number }>;
 }
 
 function formatCountdown(seconds: number): string {

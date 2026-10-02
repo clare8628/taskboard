@@ -31,6 +31,7 @@ export interface TaskProcessingPresentation {
   agentRun?: {
     platform: string;
     taskId: string;
+    lastLine?: string | null;
   };
 }
 
@@ -170,7 +171,7 @@ export function taskCardPresentation(
     total: number | null;
     running: boolean;
   } | null | undefined = undefined,
-  agentRun: { platform: string; taskId: string; } | null = null,
+  agentRun: { platform: string; taskId: string; lastLine?: string | null } | null = null,
 ): TaskCardPresentation {
   const conversations = taskConversations(task, aiThreads);
   let runningAi: TaskConversationItem | undefined;

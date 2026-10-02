@@ -2225,6 +2225,16 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { success });
       }
 
+      if (pathname === "/api/local/agent-runner/abort") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const body = await readJson(request);
+        if (typeof body.taskId !== "string") {
+          throw new ApiError(400, "INVALID_INPUT", "taskId is required");
+        }
+        const success = agentRunner.abortTask(body.taskId);
+        return sendJson(response, 200, { success });
+      }
+
       if (pathname === "/api/local/agent-runner/auth") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         const body = await readJson(request);

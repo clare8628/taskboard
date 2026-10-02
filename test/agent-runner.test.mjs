@@ -642,4 +642,62 @@ test("AgentRunner auto-responds to interactive prompts when autoApprovePrompts i
   await runner.close();
 });
 
+test("AgentRunner abortTask terminates child process and tracks lastLine", async () => {
+  const mockChild = new EventEmitter();
+  mockChild.pid = 99999;
+  mockChild.stdin = { writable: true, write: () => true };
+  mockChild.stdout = new EventEmitter();
+  mockChild.stderr = new EventEmitter();
+
+  let signalSent = null;
+
+  const runner = new AgentRunner({
+    apiBaseUrl: "http://127.0.0.1:47823",
+    spawnProcess: () => mockChild,
+    fetch: async (url) => {
+      const s = String(url);
+      if (s.endsWith("/api/projects")) {
+        return { ok: true, json: async () => ({ projects: [{ id: "proj-abort", workspacePath: "/work/abort" }] }) };
+      }
+      if (s.includes("/api/tasks?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tasks: [{ id: "task-abort-1", identifier: "ABORT-1", projectId: "proj-abort", status: "todo", version: 1 }],
+          }),
+        };
+      }
+      if (s.endsWith("/move")) {
+        return { ok: true, json: async () => ({ task: { id: "task-abort-1", version: 2 } }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+    checkAgentAuth: async () => true,
+  });
+
+  const dispatchPromise = runner.dispatchProject("proj-abort", {
+    status: "ACTIVE",
+    agentPlatform: "claude",
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+
+  mockChild.stdout.emit("data", Buffer.from("Running 92 unit tests...\n"));
+
+  const runs = runner.status().activeRuns;
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].lastLine, "Running 92 unit tests...");
+
+  const aborted = runner.abortTask("task-abort-1");
+  assert.equal(aborted, true);
+
+  mockChild.emit("close", 1, "SIGTERM");
+  await dispatchPromise;
+
+  assert.equal(runner.status().activeRuns.length, 0);
+
+  await runner.close();
+});
+
+
 

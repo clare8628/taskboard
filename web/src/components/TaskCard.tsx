@@ -195,7 +195,13 @@ function ProcessingProgress({
   );
 }
 
-function ProcessingLabel({ processing }: { processing: TaskCardPresentation["processing"] }) {
+function ProcessingLabel({
+  processing,
+  agentRun,
+}: {
+  processing: TaskCardPresentation["processing"];
+  agentRun?: { platform?: string; lastLine?: string | null } | null;
+}) {
   const { text } = useTaskboardI18n();
   const { running, startedAt } = processing;
   const [now, setNow] = useState(Date.now);
@@ -206,11 +212,31 @@ function ProcessingLabel({ processing }: { processing: TaskCardPresentation["pro
     return () => window.clearInterval(timer);
   }, [running, startedAt]);
   const elapsed = elapsedTime(startedAt, now);
+  const statusText = running
+    ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
+    : text("暂停处理", "Processing paused");
+
   return (
-    <span className="task-processing-label">
-      {running
-        ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
-        : text("暂停处理", "Processing paused")}
+    <span className="task-processing-label" title={agentRun?.lastLine || undefined}>
+      {statusText}
+      {agentRun?.lastLine && (
+        <span
+          className="task-processing-subtext"
+          style={{
+            opacity: 0.8,
+            marginLeft: "4px",
+            fontSize: "11px",
+            maxWidth: "180px",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            display: "inline-block",
+            verticalAlign: "bottom",
+          }}
+        >
+          · {agentRun.lastLine}
+        </span>
+      )}
     </span>
   );
 }
@@ -228,7 +254,7 @@ function ProcessingStatusRow({
   return (
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
-      <ProcessingLabel processing={presentation.processing} />
+      <ProcessingLabel processing={presentation.processing} agentRun={agentRun} />
       <span className="task-processing-spacer" aria-hidden="true" />
       
       {agentRun && (
@@ -256,6 +282,18 @@ function ProcessingStatusRow({
             title={text("發送 Enter 繼續（系統亦會自動應答）", "Send Enter to continue (auto-approved automatically)")}
           >
             {text("繼續(Enter)", "Continue(Enter)")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            style={{ padding: "2px 6px", fontSize: "11px", height: "auto", color: "var(--taskboard-danger, #e53e3e)" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent("agent-runner-abort", { detail: { taskId: agentRun.taskId } }));
+            }}
+            title={text("強制終止執行並退回待辦", "Force abort running agent and revert to todo")}
+          >
+            {text("中止", "Abort")}
           </button>
         </div>
       )}

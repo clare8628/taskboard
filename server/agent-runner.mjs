@@ -291,6 +291,8 @@ export class AgentRunner {
         platform: run.platform,
         sessionId: run.sessionId,
         startedAt: run.startedAt,
+        lastLine: run.lastLine || null,
+        lastOutputAt: run.lastOutputAt || null,
       })),
       runningProjects: [...this.projectRuns],
       closed: this.closed,
@@ -457,6 +459,20 @@ export class AgentRunner {
       return true;
     } catch (e) {
       console.error(`[AgentRunner] Failed to send input to task ${taskId}:`, e);
+      return false;
+    }
+  }
+
+  abortTask(taskId) {
+    const run = this.activeRuns.get(taskId);
+    if (!run) return false;
+    try {
+      if (run.child?.pid) {
+        signalProcessTree(run.child.pid, "SIGTERM");
+      }
+      return true;
+    } catch (e) {
+      console.error(`[AgentRunner] Failed to abort task ${taskId}:`, e);
       return false;
     }
   }
@@ -644,6 +660,8 @@ export class AgentRunner {
       platform,
       sessionId,
       startedAt: Date.now(),
+      lastLine: null,
+      lastOutputAt: null,
     };
 
     const autoApprove = config?.autoApprovePrompts !== false;
@@ -698,11 +716,21 @@ export class AgentRunner {
         child.stdout?.on("data", (chunk) => {
           const str = chunk.toString("utf8");
           stdout += str;
+          runState.lastOutputAt = Date.now();
+          const lines = stripAnsi(str).trim().split("\n").filter((l) => l.trim().length > 0);
+          if (lines.length > 0) {
+            runState.lastLine = lines[lines.length - 1].slice(0, 150);
+          }
           checkAndAutoRespond(str, child);
         });
         child.stderr?.on("data", (chunk) => {
           const str = chunk.toString("utf8");
           stderr += str;
+          runState.lastOutputAt = Date.now();
+          const lines = stripAnsi(str).trim().split("\n").filter((l) => l.trim().length > 0);
+          if (lines.length > 0) {
+            runState.lastLine = lines[lines.length - 1].slice(0, 150);
+          }
           checkAndAutoRespond(str, child);
         });
         child.on("error", (err) => {
