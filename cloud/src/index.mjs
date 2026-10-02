@@ -38,6 +38,7 @@ const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
+const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
 const INLINE_ATTACHMENT_TYPES = new Set([
   "application/pdf",
   "image/avif",
@@ -69,11 +70,15 @@ export class RealtimeHub extends DurableObject {
 
     if (url.pathname === "/client-storage") {
       if (request.method === "GET") {
-        return json(200, {
-          entries: Object.fromEntries(await this.ctx.storage.list({
-            prefix: PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX,
-          })),
+        const displaySettings = await this.ctx.storage.list({
+          prefix: PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX,
         });
+        const automations = await this.ctx.storage.get(PROJECT_AUTOMATIONS_KEY);
+        const entries = Object.fromEntries(displaySettings);
+        if (typeof automations === "string") {
+          entries[PROJECT_AUTOMATIONS_KEY] = automations;
+        }
+        return json(200, { entries });
       }
       if (request.method === "PATCH") {
         const { key, value } = await request.json();
@@ -884,13 +889,16 @@ function parseClientStorageUpdate(body) {
   assertAllowedKeys(body, new Set(["key", "value"]));
   const key = stringField(body.key, "key", { required: true, maxLength: 512 });
   if (
-    !key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
-    || key.length === PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX.length
+    key !== PROJECT_AUTOMATIONS_KEY
+    && (
+      !key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+      || key.length === PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX.length
+    )
   ) {
     throw new ApiError(
       400,
       "INVALID_FIELD",
-      "'key' must identify project board display settings",
+      "'key' must identify project board display settings or project automations",
     );
   }
   return {

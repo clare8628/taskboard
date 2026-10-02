@@ -1,0 +1,547 @@
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { accessSync, constants } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { signalProcessTree } from "../shared/process-tree.mjs";
+
+const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const MAX_COMMENT_LENGTH = 30_000;
+
+/**
+ * Resolve the CLI executable path for claude or agy.
+ */
+export function resolveAgentExecutable(platform, explicit = null) {
+  if (explicit) return explicit;
+  const envKey = platform === "claude"
+    ? "TASKBOARD_CLAUDE_EXECUTABLE"
+    : "TASKBOARD_AGY_EXECUTABLE";
+  if (process.env[envKey]) return process.env[envKey];
+
+  const home = process.env.HOME || os.homedir();
+  const candidates = [
+    path.join(home, ".local", "bin", platform),
+    `/usr/local/bin/${platform}`,
+    `/opt/homebrew/bin/${platform}`,
+    platform,
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (candidate.includes(path.sep)) {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      }
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  return platform;
+}
+
+/**
+ * Build CLI arguments for the target agent platform.
+ */
+export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) {
+  if (platform === "claude") {
+    const args = [
+      "-p",
+      prompt,
+      "--session-id",
+      sessionId,
+      "--dangerously-skip-permissions",
+    ];
+    if (config.model) {
+      args.push("--model", config.model);
+    }
+    return args;
+  }
+
+  if (platform === "agy") {
+    const args = [
+      "-p",
+      prompt,
+      "--conversation",
+      sessionId,
+      "--dangerously-skip-permissions",
+    ];
+    if (config.model) {
+      args.push("--model", config.model);
+    }
+    if (config.reasoningEffort) {
+      args.push("--effort", config.reasoningEffort);
+    }
+    return args;
+  }
+
+  throw new Error(`Unsupported agent platform '${platform}'`);
+}
+
+/**
+ * Build the execution prompt given to the AI Agent CLI.
+ */
+export function buildAgentTaskPrompt({ project, task, workspacePath }) {
+  const parts = [
+    `# Taskboard 任務指派：[${task.identifier || task.id}] ${task.title}`,
+    "",
+    "## 任務描述 (Task Description)",
+    task.description?.trim() || "（無特定詳細描述）",
+    "",
+    "## 任務資訊",
+    `- 專案名稱: ${project?.name || task.projectId}`,
+    `- 優先級: ${task.priority || "none"}`,
+    `- 標籤: ${(task.labels || []).join(", ") || "無"}`,
+    `- 工作目錄: ${workspacePath}`,
+    "",
+    "## 執行指令與規範",
+    "1. 你正在以無人值守（Headless）模式自主執行此看板任務。",
+    "2. 請先檢視工作區內的程式碼結構、相關檔案與現有規範，並完成所有必要的修改與實作。",
+    "3. 若專案包含測試、型別檢查或代碼驗證工具，請務必在完成前執行並確認通過。",
+    "4. 不需要詢問使用者確認，請直接自主完成必要操作。",
+    "5. 執行完成後，請於最終輸出中清楚整理：「改動檔案清單」、「主要實作內容」、「驗證結果」以及「任何後續注意事項」。",
+  ];
+
+  return parts.join("\n");
+}
+
+/**
+ * Determine if a task is eligible for dispatch by this runner.
+ */
+export function evaluateTaskEligibility(task, projectConfig) {
+  if (!task || task.status !== "todo" || task.archivedAt != null) {
+    return { eligible: false, reason: "NOT_TODO_OR_ARCHIVED" };
+  }
+
+  // Blocker dependencies check: every blocker must be "done"
+  const blockedBy = task.relations?.blockedBy ?? [];
+  const hasIncompleteBlocker = blockedBy.some((dep) => dep.status !== "done");
+  if (hasIncompleteBlocker) {
+    return { eligible: false, reason: "BLOCKED_BY_DEPENDENCIES" };
+  }
+
+  // Label-based agent routing
+  const labels = Array.isArray(task.labels) ? task.labels : [];
+  for (const label of labels) {
+    if (/^agent:codex$/i.test(label)) {
+      return { eligible: false, reason: "ROUTED_TO_CODEX" };
+    }
+    if (/^agent:claude$/i.test(label)) {
+      return { eligible: true, platform: "claude" };
+    }
+    if (/^agent:agy$/i.test(label)) {
+      return { eligible: true, platform: "agy" };
+    }
+  }
+
+  // Fallback to project default agent platform
+  const defaultPlatform = projectConfig?.agentPlatform;
+  if (defaultPlatform === "claude" || defaultPlatform === "agy") {
+    return { eligible: true, platform: defaultPlatform };
+  }
+
+  return { eligible: false, reason: "PLATFORM_NOT_SUPPORTED" };
+}
+
+/**
+ * Truncate long strings for API comments.
+ */
+function truncateOutput(content, max = MAX_COMMENT_LENGTH) {
+  if (typeof content !== "string") return "";
+  if (content.length <= max) return content;
+  return `${content.slice(0, max)}\n\n... (輸出內容過長已截斷)`;
+}
+
+export class AgentRunner {
+  constructor(options = {}) {
+    this.readClientStorage = options.readClientStorage ?? (async () => ({}));
+    this.apiBaseUrl = options.apiBaseUrl ?? "http://127.0.0.1:47823";
+    this.fetch = options.fetch ?? globalThis.fetch;
+    this.events = options.events ?? null;
+    this.claudeExecutable = options.claudeExecutable ?? null;
+    this.agyExecutable = options.agyExecutable ?? null;
+    this.processEnv = options.processEnv ?? process.env;
+    this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.spawnProcess = options.spawnProcess ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+
+    this.activeRuns = new Map(); // taskId -> { child, promise, platform, sessionId, startedAt }
+    this.projectRuns = new Set(); // projectId
+    this.closed = false;
+    this.timer = null;
+    this.eventListeners = [];
+  }
+
+  getResolvedApiBaseUrl() {
+    const raw = typeof this.apiBaseUrl === "function" ? this.apiBaseUrl() : this.apiBaseUrl;
+    return String(raw || "http://127.0.0.1:47823").replace(/\/$/, "");
+  }
+
+  start() {
+    if (this.closed || this.timer) return;
+
+    this.timer = setInterval(() => void this.checkAndDispatch(), this.pollIntervalMs);
+    this.timer.unref?.();
+
+    if (this.events) {
+      const onStorageUpdated = ({ key }) => {
+        if (key === "taskboard.projectAutomations.v1") {
+          void this.checkAndDispatch();
+        }
+      };
+      const onTaskEvent = () => {
+        void this.checkAndDispatch();
+      };
+
+      this.events.on("client-storage.updated", onStorageUpdated);
+      this.events.on("task.created", onTaskEvent);
+      this.events.on("task.updated", onTaskEvent);
+      this.events.on("task.moved", onTaskEvent);
+
+      this.eventListeners.push(
+        () => this.events.off("client-storage.updated", onStorageUpdated),
+        () => this.events.off("task.created", onTaskEvent),
+        () => this.events.off("task.updated", onTaskEvent),
+        () => this.events.off("task.moved", onTaskEvent),
+      );
+    }
+
+    void this.checkAndDispatch();
+  }
+
+  status() {
+    return {
+      activeRuns: [...this.activeRuns.entries()].map(([taskId, run]) => ({
+        taskId,
+        platform: run.platform,
+        sessionId: run.sessionId,
+        startedAt: run.startedAt,
+      })),
+      runningProjects: [...this.projectRuns],
+      closed: this.closed,
+    };
+  }
+
+  async checkAndDispatch() {
+    if (this.closed) return;
+
+    let entries = {};
+    try {
+      entries = await this.readClientStorage();
+    } catch (error) {
+      console.error("[AgentRunner] Failed to read client storage:", error);
+      return;
+    }
+
+    const rawAutomations = entries["taskboard.projectAutomations.v1"];
+    if (!rawAutomations) return;
+
+    let automations = {};
+    try {
+      automations = JSON.parse(rawAutomations);
+    } catch {
+      return;
+    }
+
+    const dispatches = [];
+    for (const [projectId, config] of Object.entries(automations)) {
+      if (this.closed) break;
+      if (!config || config.status !== "ACTIVE") continue;
+
+      const platform = config.agentPlatform ?? "codex";
+      if (platform !== "claude" && platform !== "agy") continue;
+
+      if (this.projectRuns.has(projectId)) continue;
+
+      dispatches.push(this.dispatchProject(projectId, config));
+    }
+    await Promise.all(dispatches);
+  }
+
+  async dispatchProject(projectId, config) {
+    if (this.projectRuns.has(projectId) || this.closed) return;
+    this.projectRuns.add(projectId);
+    const apiBaseUrl = this.getResolvedApiBaseUrl();
+
+    try {
+      // 1. Fetch project metadata
+      const projectsRes = await this.fetch(`${apiBaseUrl}/api/projects`, {
+        headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+      });
+      if (!projectsRes.ok) return;
+      const projectsPayload = await projectsRes.json();
+      const project = (projectsPayload.projects || []).find((p) => p.id === projectId);
+      if (!project) return;
+
+      const workspacePath = project.workspacePath || config.workspacePath || process.cwd();
+
+      // 2. Fetch todo tasks
+      const tasksRes = await this.fetch(
+        `${apiBaseUrl}/api/tasks?projectId=${encodeURIComponent(projectId)}&status=todo&archived=false`,
+        {
+          headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+        },
+      );
+      if (!tasksRes.ok) return;
+      const tasksPayload = await tasksRes.json();
+      const tasks = tasksPayload.tasks || [];
+
+      // 3. Find first eligible task
+      let targetTask = null;
+      let targetPlatform = null;
+
+      for (const candidate of tasks) {
+        const evalResult = evaluateTaskEligibility(candidate, config);
+        if (evalResult.eligible) {
+          targetTask = candidate;
+          targetPlatform = evalResult.platform;
+          break;
+        }
+      }
+
+      if (!targetTask || !targetPlatform) return;
+
+      // 4. Execute the task
+      await this.executeTask({
+        project,
+        task: targetTask,
+        config,
+        platform: targetPlatform,
+        workspacePath,
+      });
+    } catch (error) {
+      console.error(`[AgentRunner] Error dispatching project '${projectId}':`, error);
+    } finally {
+      this.projectRuns.delete(projectId);
+    }
+  }
+
+  async executeTask({ project, task, config, platform, workspacePath }) {
+    if (this.activeRuns.has(task.id) || this.closed) return;
+    const apiBaseUrl = this.getResolvedApiBaseUrl();
+
+    const sessionId = randomUUID();
+
+    // 1. Atomically claim task: move to in_progress with agentSession
+    let currentVersion = task.version;
+    try {
+      const claimRes = await this.fetch(
+        `${apiBaseUrl}/api/tasks/${encodeURIComponent(task.id)}/move`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+            "x-taskboard-client": "agent-runner",
+          },
+          body: JSON.stringify({
+            status: "in_progress",
+            version: currentVersion,
+            agentSession: {
+              platform,
+              sessionId,
+            },
+          }),
+        },
+      );
+
+      if (claimRes.status === 409) {
+        // Version conflict or already claimed
+        return;
+      }
+
+      if (!claimRes.ok) {
+        const errorText = await claimRes.text().catch(() => "");
+        console.error(`[AgentRunner] Failed to claim task ${task.id}: ${claimRes.status} ${errorText}`);
+        return;
+      }
+
+      const claimPayload = await claimRes.json().catch(() => ({}));
+      if (claimPayload.task?.version !== undefined) {
+        currentVersion = claimPayload.task.version;
+      }
+    } catch (error) {
+      console.error(`[AgentRunner] Network error claiming task ${task.id}:`, error);
+      return;
+    }
+
+    // 2. Prepare CLI command & arguments
+    const executable = resolveAgentExecutable(
+      platform,
+      platform === "claude" ? this.claudeExecutable : this.agyExecutable,
+    );
+    const prompt = buildAgentTaskPrompt({ project, task, workspacePath });
+    const args = buildAgentCliArgs({ platform, prompt, sessionId, config });
+
+    const runState = {
+      child: null,
+      promise: null,
+      platform,
+      sessionId,
+      startedAt: Date.now(),
+    };
+
+    runState.promise = new Promise((resolve) => {
+      let stdout = "";
+      let stderr = "";
+      let errorOccurred = null;
+
+      try {
+        const child = this.spawnProcess(executable, args, {
+          cwd: workspacePath,
+          env: this.processEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        runState.child = child;
+
+        child.stdout?.on("data", (chunk) => {
+          stdout += chunk.toString("utf8");
+        });
+        child.stderr?.on("data", (chunk) => {
+          stderr += chunk.toString("utf8");
+        });
+        child.on("error", (err) => {
+          errorOccurred = err;
+        });
+        child.on("close", (exitCode, signal) => {
+          resolve({ exitCode, signal, stdout, stderr, error: errorOccurred });
+        });
+      } catch (err) {
+        resolve({ exitCode: 1, signal: null, stdout: "", stderr: "", error: err });
+      }
+    });
+
+    this.activeRuns.set(task.id, runState);
+
+    let executionResult;
+    try {
+      executionResult = await runState.promise;
+    } finally {
+      this.activeRuns.delete(task.id);
+    }
+
+    const { exitCode, stdout, stderr, error } = executionResult;
+    const isSuccess = exitCode === 0 && !error;
+    const resumeCommand = platform === "claude"
+      ? `claude --resume ${sessionId}`
+      : `agy --conversation ${sessionId}`;
+    const agentTitle = platform === "claude" ? "Claude Code" : "Google Antigravity (AGY)";
+
+    // 3. Post summary or error comment
+    let commentBody;
+    if (isSuccess) {
+      commentBody = [
+        `### 🤖 ${agentTitle} 執行完成報告`,
+        "",
+        `- **會話識別碼 (Session ID)**: \`${sessionId}\``,
+        `- **終端接續命令**: \`${resumeCommand}\``,
+        "",
+        "---",
+        "",
+        truncateOutput(stdout.trim() || "任務執行完成，無終端額外輸出。"),
+      ].join("\n");
+    } else {
+      const details = error?.message || stderr.trim() || stdout.trim() || "未知執行錯誤或異常退出";
+      commentBody = [
+        `### ⚠️ ${agentTitle} 執行失敗 (Exit Code: ${exitCode ?? "ERROR"})`,
+        "",
+        `- **會話識別碼 (Session ID)**: \`${sessionId}\``,
+        `- **終端檢視命令**: \`${resumeCommand}\``,
+        "",
+        "**錯誤詳情**:",
+        "```",
+        truncateOutput(details, 10_000),
+        "```",
+      ].join("\n");
+    }
+
+    try {
+      await this.fetch(
+        `${apiBaseUrl}/api/tasks/${encodeURIComponent(task.id)}/comments`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+            "x-taskboard-client": "agent-runner",
+          },
+          body: JSON.stringify({
+            body: commentBody,
+            agentSession: {
+              platform,
+              sessionId,
+            },
+          }),
+        },
+      );
+    } catch (commentError) {
+      console.error(`[AgentRunner] Failed to post comment on task ${task.id}:`, commentError);
+    }
+
+    // 4. Update task status: move to in_review on success, or back to todo on failure
+    const nextStatus = isSuccess ? "in_review" : "todo";
+    try {
+      // Fetch latest task version first to avoid 409
+      const latestRes = await this.fetch(
+        `${apiBaseUrl}/api/tasks/${encodeURIComponent(task.id)}`,
+        {
+          headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+        },
+      );
+      if (latestRes.ok) {
+        const latestPayload = await latestRes.json();
+        if (latestPayload.task?.version !== undefined) {
+          currentVersion = latestPayload.task.version;
+        }
+      }
+
+      await this.fetch(
+        `${apiBaseUrl}/api/tasks/${encodeURIComponent(task.id)}/move`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+            "x-taskboard-client": "agent-runner",
+          },
+          body: JSON.stringify({
+            status: nextStatus,
+            version: currentVersion,
+            agentSession: {
+              platform,
+              sessionId,
+            },
+          }),
+        },
+      );
+    } catch (moveError) {
+      console.error(`[AgentRunner] Failed to move task ${task.id} to ${nextStatus}:`, moveError);
+    }
+  }
+
+  async close() {
+    this.closed = true;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+
+    for (const unsubscribe of this.eventListeners) {
+      try {
+        unsubscribe();
+      } catch {}
+    }
+    this.eventListeners = [];
+
+    const runs = [...this.activeRuns.values()];
+    for (const run of runs) {
+      if (run.child) {
+        signalProcessTree(run.child, "SIGTERM");
+      }
+    }
+
+    await Promise.allSettled(runs.map((run) => run.promise));
+    this.activeRuns.clear();
+    this.projectRuns.clear();
+  }
+}

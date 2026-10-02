@@ -588,6 +588,7 @@ interface LocalRealtimeSyncProps {
     options?: { quiet?: boolean; signal?: AbortSignal },
   ) => Promise<void>;
   refreshProjectBoardDisplaySettings: () => Promise<void>;
+  refreshProjectAutomations?: () => void;
   setConnection: Dispatch<SetStateAction<ConnectionState>>;
   setCommentsRevision: Dispatch<SetStateAction<number>>;
   setAttachmentsRevision: Dispatch<SetStateAction<number>>;
@@ -600,6 +601,7 @@ function LocalRealtimeSync({
   refreshProjectList,
   refreshTasks,
   refreshProjectBoardDisplaySettings,
+  refreshProjectAutomations,
   setConnection,
   setCommentsRevision,
   setAttachmentsRevision,
@@ -659,6 +661,13 @@ function LocalRealtimeSync({
         && payload.key?.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
       ) {
         void refreshProjectBoardDisplaySettings();
+        return;
+      }
+      if (
+        event.type === "client-storage.updated"
+        && payload.key === PROJECT_AUTOMATIONS_KEY
+      ) {
+        refreshProjectAutomations?.();
         return;
       }
       const { selectedProjectId, detailTaskId } = selectionRef.current;
@@ -3537,6 +3546,7 @@ export function App() {
           refreshProjectList={refreshProjectList}
           refreshTasks={refreshTasks}
           refreshProjectBoardDisplaySettings={refreshProjectBoardDisplaySettings}
+          refreshProjectAutomations={() => setProjectAutomations(readProjectAutomations())}
           setConnection={setConnection}
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}

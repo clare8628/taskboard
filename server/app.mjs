@@ -15,6 +15,7 @@ import {
 } from "../shared/api-fields.mjs";
 import { createHmac, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
@@ -45,6 +46,7 @@ import { TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
+import { AgentRunner } from "./agent-runner.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -1102,8 +1104,9 @@ function parseComposerTurn(body) {
   };
 }
 
-class EventHub {
+class EventHub extends EventEmitter {
   constructor() {
+    super();
     this.clients = new Set();
     this.keepAlive = setInterval(() => {
       for (const response of this.clients) response.write(": keep-alive\n\n");
@@ -1124,21 +1127,24 @@ class EventHub {
   }
 
   emit(type, value) {
+    super.emit(type, value);
     const event = {
       type,
-      projectId: value.projectId ?? value.project?.id ?? value.task?.projectId,
-      taskId: value.task?.id ?? value.comment?.taskId ?? value.attachment?.taskId,
+      projectId: value?.projectId ?? value?.project?.id ?? value?.task?.projectId,
+      taskId: value?.task?.id ?? value?.comment?.taskId ?? value?.attachment?.taskId,
       ...value,
       at: new Date().toISOString(),
     };
     const message = `event: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
     for (const response of this.clients) response.write(message);
+    return true;
   }
 
   close() {
     clearInterval(this.keepAlive);
     for (const response of this.clients) response.end();
     this.clients.clear();
+    this.removeAllListeners();
   }
 }
 
@@ -1721,7 +1727,21 @@ export function createTaskboardServer(options = {}) {
     return state;
   }
 
-  const server = createServer(async (request, response) => {
+  let server = null;
+  const agentRunner = options.agentRunner ?? new AgentRunner({
+    readClientStorage,
+    apiBaseUrl: () => {
+      const addr = server?.address();
+      const port = addr && typeof addr === "object" ? addr.port : resolvePort();
+      return `http://127.0.0.1:${port}`;
+    },
+    events,
+    claudeExecutable: options.claudeExecutable,
+    agyExecutable: options.agyExecutable,
+    processEnv: codexProcessEnvironment,
+  });
+
+  server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     try {
@@ -1834,10 +1854,20 @@ export function createTaskboardServer(options = {}) {
             assertLoopbackRequest(request);
             const shared = await readCloudJson("/api/client-storage");
             for (const key of Object.keys(entries)) {
-              if (key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)) delete entries[key];
+              if (
+                key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+                || key === "taskboard.projectAutomations.v1"
+              ) {
+                delete entries[key];
+              }
             }
             for (const [key, value] of Object.entries(shared.entries)) {
-              if (key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)) entries[key] = value;
+              if (
+                key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+                || key === "taskboard.projectAutomations.v1"
+              ) {
+                entries[key] = value;
+              }
             }
           }
           return sendJson(response, 200, { entries });
@@ -1847,20 +1877,26 @@ export function createTaskboardServer(options = {}) {
           const config = await cloudConfig.read();
           if (
             config.remoteUrl
-            && update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+            && (
+              update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+              || update.key === "taskboard.projectAutomations.v1"
+            )
           ) {
             assertLoopbackRequest(request);
-            return sendFetchResponse(
-              response,
-              await cloudProxy.forward(new Request("http://127.0.0.1/api/client-storage", {
-                method: "PATCH",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(update),
-              })),
-            );
+            const cloudResponse = await cloudProxy.forward(new Request("http://127.0.0.1/api/client-storage", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(update),
+            }));
+            await updateClientStorage(update);
+            events.emit("client-storage.updated", { key: update.key });
+            return sendFetchResponse(response, cloudResponse);
           }
           await updateClientStorage(update);
-          if (update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)) {
+          if (
+            update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+            || update.key === "taskboard.projectAutomations.v1"
+          ) {
             events.emit("client-storage.updated", { key: update.key });
           }
           return sendEmpty(response, 204);
@@ -2138,6 +2174,19 @@ export function createTaskboardServer(options = {}) {
             nodes: input.document.nodes,
           }),
         );
+      }
+
+      if (pathname === "/api/local/agent-runner/status") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/agent-runner/status");
+        return sendJson(response, 200, agentRunner.status());
+      }
+
+      if (pathname === "/api/local/agent-runner/dispatch") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/agent-runner/dispatch");
+        void agentRunner.checkAndDispatch();
+        return sendJson(response, 200, { status: "dispatched" });
       }
 
       const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);
@@ -3176,6 +3225,7 @@ export function createTaskboardServer(options = {}) {
   return {
     database,
     aiChat,
+    agentRunner,
     server,
     options: resolved,
     async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
@@ -3200,6 +3250,7 @@ export function createTaskboardServer(options = {}) {
         else server.listen({ fd });
       });
       listening = true;
+      agentRunner.start();
       return server.address();
     },
     async close() {
@@ -3217,6 +3268,7 @@ export function createTaskboardServer(options = {}) {
       events.close();
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();
+      await agentRunner.close();
       await aiChat.close();
       await projectSummary.close();
       await serverClosed;
