@@ -43,6 +43,7 @@ import {
   restoreTask as restoreTaskRequest,
   setApiText,
   setCurrentUserActor,
+  setProjectWorkspaceMapping as setProjectWorkspaceMappingRequest,
   syncJiraConnection,
   uploadAttachment,
   updateTask as updateTaskRequest,
@@ -848,6 +849,8 @@ export function App() {
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const [projectWorkspacePath, setProjectWorkspacePath] = useState("");
+  const [workspacePathEditor, setWorkspacePathEditor] = useState<{ projectId: string; projectName: string; path: string } | null>(null);
   const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [jiraConnection, setJiraConnection] = useState<JiraConnection | null>(null);
   const [jiraSaving, setJiraSaving] = useState(false);
@@ -919,19 +922,39 @@ export function App() {
   }, []);
 
   const rememberDeviceWorkspacePath = useCallback((projectId: string, workspacePath: string) => {
-    if (projectId === GLOBAL_PROJECT_ID) return;
+    const targetId = projectId || GLOBAL_PROJECT_ID;
     const normalizedPath = workspacePath.trim();
     setDeviceWorkspacePaths((current) => {
-      if (current[projectId] === normalizedPath || (!normalizedPath && !(projectId in current))) {
+      if (current[targetId] === normalizedPath || (!normalizedPath && !(targetId in current))) {
         return current;
       }
       const next = { ...current };
-      if (normalizedPath) next[projectId] = normalizedPath;
-      else delete next[projectId];
+      if (normalizedPath) next[targetId] = normalizedPath;
+      else delete next[targetId];
       taskboardStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
+
+  const handleUpdateWorkspacePath = useCallback(async (projectId: string, workspacePath: string) => {
+    const targetId = projectId || GLOBAL_PROJECT_ID;
+    const normalized = workspacePath.trim();
+    if (!normalized) return;
+    // Changing the remembered path re-runs the development scan effect for the active project.
+    rememberDeviceWorkspacePath(targetId, normalized);
+    await setProjectWorkspaceMappingRequest(targetId, normalized);
+  }, [rememberDeviceWorkspacePath]);
+
+  const openWorkspacePathEditor = useCallback((projectId: string) => {
+    const targetId = projectId || GLOBAL_PROJECT_ID;
+    const project = projects.find((candidate) => candidate.id === targetId);
+    setProjectContextMenu(null);
+    setWorkspacePathEditor({
+      projectId: targetId,
+      projectName: project?.name ?? targetId,
+      path: deviceWorkspacePaths[targetId] ?? project?.workspacePath ?? "",
+    });
+  }, [deviceWorkspacePaths, projects]);
 
   const rememberProjectOpen = useCallback((projectId: string) => {
     setRecentProjectIds((current) => {
@@ -1036,7 +1059,7 @@ export function App() {
     ...DEFAULT_USER_ACTOR,
     name: text("本地用户", "Local user"),
   };
-  const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID || isAllProjects
+  const selectedDeviceWorkspacePath = isAllProjects
     ? undefined
     : deviceWorkspacePaths[selectedProjectId];
   const selectedProjectAutomation = projectAutomations[selectedProjectId];
@@ -1234,9 +1257,7 @@ export function App() {
       ...sortedChoices.filter((project) => project.issueCount === 0),
     ];
   }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
-  const projectMenuCandidates = projectChoices.filter(
-    (project) => project.id !== GLOBAL_PROJECT_ID || project.issueCount > 0,
-  );
+  const projectMenuCandidates = projectChoices;
   const projectMenuNeedle = projectMenuSearch.trim().toLocaleLowerCase();
   const projectMenuChoices = projectMenuNeedle
     ? projectMenuCandidates.filter((project) => project.name.toLocaleLowerCase().includes(projectMenuNeedle))
@@ -1246,7 +1267,7 @@ export function App() {
   const editorProjectId = editor?.projectId
     ?? (newTaskDraft?.projectId === selectedProjectId ? newTaskDraft.targetProjectId : undefined)
     ?? (isAllProjects ? GLOBAL_PROJECT_ID : selectedProjectId);
-  const developmentEditorProjectId = isAllProjects && editor ? editorProjectId : null;
+  const developmentEditorProjectId = editor ? editorProjectId : null;
   const createTargetProjects = projectChoices.flatMap((choice) => {
     const project = projects.find((candidate) => candidate.id === choice.id);
     return project && project.source !== "jira"
@@ -2120,9 +2141,8 @@ export function App() {
 
   useEffect(() => {
     const standalone = !embedded || window.parent === window;
-    const developmentProjectId = isAllProjects
-      ? developmentEditorProjectId ?? (standalone ? contextMenuTask?.projectId : null)
-      : selectedProjectId;
+    const developmentProjectId = developmentEditorProjectId
+      ?? (isAllProjects ? (standalone ? contextMenuTask?.projectId : null) : selectedProjectId);
     if (!developmentProjectId) {
       setDevelopmentScan({ workspacePath: null, contexts: [] });
       setDevelopmentScanLoading(false);
@@ -2135,10 +2155,10 @@ export function App() {
     const codexThreadId = hostContext?.threadId
       ?? (isAllProjects ? contextMenuTask?.threadId : detailTask?.threadId)
       ?? undefined;
-    const workspacePath = isAllProjects
-      ? developmentEditorProjectId
-        ? deviceWorkspacePaths[developmentEditorProjectId]
-        : contextMenuWorkspacePath
+    const workspacePath = developmentEditorProjectId
+      ? deviceWorkspacePaths[developmentEditorProjectId]
+      : isAllProjects
+      ? contextMenuWorkspacePath
       : selectedDeviceWorkspacePath;
     setDevelopmentScan({ workspacePath: workspacePath ?? null, contexts: [] });
     setDevelopmentScanLoading(true);
@@ -2551,11 +2571,19 @@ export function App() {
         relationWriteFailed = true;
       }
     }
+    const shouldIncludeSavedTask = isAllProjects || targetProjectId === selectedProjectId;
     relationUpdates.set(saved.id, saved);
     setTasks((current) => sortTasks([
       ...current.filter((task) => !relationUpdates.has(task.id)),
-      ...relationUpdates.values(),
+      ...(shouldIncludeSavedTask ? relationUpdates.values() : []),
     ]));
+    if (targetProjectId !== selectedProjectId && !isAllProjects) {
+      const targetProjectName = projectNames[targetProjectId] ?? targetProjectId;
+      setAnnouncement(text(
+        `已在“${targetProjectName}”中创建 ${saved.identifier}`,
+        `Created ${saved.identifier} in “${targetProjectName}”`,
+      ));
+    }
     setNewTaskDraft(null);
     const failedWrites = [
       ...(relationWriteFailed ? [{ zh: "关系", en: "relations" }] : []),
@@ -3307,6 +3335,7 @@ export function App() {
     setProjectMenuOpen(false);
     setProjectContextMenu(null);
     setProjectName("");
+    setProjectWorkspacePath("");
     setActionError(null);
     setProjectCreateOpen(true);
   }
@@ -3314,6 +3343,7 @@ export function App() {
   function closeCreateProjectDialog() {
     if (openingProjectId) return;
     setProjectCreateOpen(false);
+    setProjectWorkspacePath("");
     setActionError(null);
   }
 
@@ -3321,6 +3351,8 @@ export function App() {
     if (openingProjectId) return;
     const name = projectName.trim();
     if (!name) return;
+    const trimmedWorkspacePath = projectWorkspacePath.trim();
+    const workspacePath = trimmedWorkspacePath || null;
     const projectId = `temp-${window.crypto.randomUUID()}`;
     setOpeningProjectId(projectId);
     setActionError(null);
@@ -3328,10 +3360,15 @@ export function App() {
       const project = await createProjectRequest({
         id: projectId,
         name,
-        workspacePath: null,
+        workspacePath,
       });
+      if (workspacePath) {
+        rememberDeviceWorkspacePath(project.id, workspacePath);
+        void setProjectWorkspaceMappingRequest(project.id, workspacePath);
+      }
       setProjects((current) => [...current, project]);
       setProjectCreateOpen(false);
+      setProjectWorkspacePath("");
       changeProject(project.id);
     } catch (error) {
       setActionError(errorMessage(error));
@@ -3836,6 +3873,7 @@ export function App() {
             availableLabels={availableLabels}
             developmentScan={developmentScan}
             developmentScanLoading={developmentScanLoading}
+            onEditWorkspacePath={openWorkspacePathEditor}
             commentsRevision={commentsRevision}
             attachmentsRevision={attachmentsRevision}
             onCreateLabel={persistProjectLabel}
@@ -4074,6 +4112,16 @@ export function App() {
           style={{ left: projectContextMenu.x, top: projectContextMenu.y }}
         >
           <button
+            className="context-menu-item"
+            type="button"
+            role="menuitem"
+            onClick={() => openWorkspacePathEditor(projectContextMenu.project.id)}
+            title={deviceWorkspacePaths[projectContextMenu.project.id] ?? undefined}
+          >
+            <span className="context-menu-icon" aria-hidden="true"><LinearIcon name="folder" /></span>
+            <span className="context-menu-label">{text("本地代码路径…", "Workspace path…")}</span>
+          </button>
+          <button
             className="context-menu-item is-danger"
             type="button"
             role="menuitem"
@@ -4095,6 +4143,51 @@ export function App() {
           }}
           onSave={saveJiraConnection}
         />
+      )}
+
+      {workspacePathEditor && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setWorkspacePathEditor(null);
+          }}
+        >
+          <form
+            className="delete-dialog project-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workspace-path-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const { projectId, path } = workspacePathEditor;
+              setWorkspacePathEditor(null);
+              void handleUpdateWorkspacePath(projectId, path);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setWorkspacePathEditor(null);
+            }}
+          >
+            <h2 id="workspace-path-title">{text("本地代码路径", "Workspace path")} · {workspacePathEditor.projectName}</h2>
+            <label>
+              <span>{text("此项目在本设备上的绝对路径", "Absolute path of this project on this device")}</span>
+              <input
+                autoFocus
+                required
+                placeholder={text("例如 /Users/clare/.../project", "e.g. /Users/clare/.../project")}
+                value={workspacePathEditor.path}
+                onChange={(event) => setWorkspacePathEditor({ ...workspacePathEditor, path: event.target.value })}
+              />
+            </label>
+            <div>
+              <button className="button secondary" type="button" onClick={() => setWorkspacePathEditor(null)}>
+                {text("取消", "Cancel")}
+              </button>
+              <button className="button primary" type="submit" disabled={!workspacePathEditor.path.trim()}>
+                {text("保存", "Save")}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {projectCreateOpen && (
@@ -4126,6 +4219,14 @@ export function App() {
                 required
                 value={projectName}
                 onChange={(event) => setProjectName(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>{text("本地代码路径（可选）", "Local workspace path (optional)")}</span>
+              <input
+                placeholder={text("例如 /Users/clare/.../project", "e.g. /Users/clare/.../project")}
+                value={projectWorkspacePath}
+                onChange={(event) => setProjectWorkspacePath(event.target.value)}
               />
             </label>
             {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
@@ -4276,7 +4377,7 @@ export function App() {
         <TaskEditor
           key={`new-${selectedProjectId}-${editor.status}`}
           projectId={editorProjectId}
-          projectOptions={isAllProjects ? createTargetProjects : undefined}
+          projectOptions={createTargetProjects.length > 1 ? createTargetProjects : undefined}
           onProjectChange={(projectId) => setEditor((current) => (
             current ? { ...current, projectId } : current
           ))}
@@ -4290,6 +4391,7 @@ export function App() {
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
+          onEditWorkspacePath={openWorkspacePathEditor}
           onCreateLabel={(label) => persistProjectLabel(label, editorProjectId ?? selectedProjectId)}
           onCancel={(draft) => {
             setNewTaskDraft(draft ? {

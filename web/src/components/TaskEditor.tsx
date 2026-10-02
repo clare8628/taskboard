@@ -112,6 +112,7 @@ interface TaskEditorProps {
   currentUser: ActorIdentity;
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
+  onEditWorkspacePath?: (projectId: string) => void;
   onCreateLabel: (label: string) => Promise<void>;
   onCancel: (draft: NewTaskEditorDraft | null) => void;
   onSave: (
@@ -170,6 +171,7 @@ export function TaskEditor({
   currentUser,
   developmentScan,
   developmentScanLoading,
+  onEditWorkspacePath,
   onCreateLabel,
   onCancel,
   onSave,
@@ -533,11 +535,11 @@ export function TaskEditor({
               <TaskPropertyPicker
                 value={projectId ?? ""}
                 options={[
-                  {
+                  ...(!projectId ? [{
                     value: "",
                     label: text("项目", "Project"),
                     icon: <TaskboardIcon name="projectFolder" />,
-                  },
+                  }] : []),
                   ...projectOptions.map((project) => ({
                     value: project.id,
                     label: project.name,
@@ -628,6 +630,13 @@ export function TaskEditor({
                     ? <BranchIcon color="currentColor" size={14} />
                     : <LinearIcon name="folder" />,
                 })),
+                ...(onEditWorkspacePath ? [{
+                  value: "__bind_workspace__",
+                  label: developmentScan.workspacePath
+                    ? `${text("修改本地代码路径", "Change workspace path")}: ${developmentScan.workspacePath}`
+                    : text("关联本地代码路径…", "Link local workspace path…"),
+                  icon: <LinearIcon name="folder" />,
+                }] : []),
               ]}
               open={menu === "development"}
               disabled={developmentScanLoading}
@@ -636,7 +645,13 @@ export function TaskEditor({
               ariaLabel={text("代码分支或 Worktree", "Code branch or worktree")}
               title={developmentScan.workspacePath ?? undefined}
               onOpenChange={(open) => setMenu(open ? "development" : null)}
-              onChange={(value) => setDevelopmentContext(value ? JSON.parse(value) as DevelopmentContext : null)}
+              onChange={(value) => {
+                if (value === "__bind_workspace__") {
+                  onEditWorkspacePath?.(projectId || "local");
+                  return;
+                }
+                setDevelopmentContext(value ? JSON.parse(value) as DevelopmentContext : null);
+              }}
             />
 
             {dueDate && (

@@ -496,6 +496,24 @@ export async function createProject(input: {
   return data.project;
 }
 
+export async function setProjectWorkspaceMapping(
+  projectId: string,
+  workspacePath: string,
+): Promise<{ projectId: string; workspacePath: string } | null> {
+  try {
+    const data = await request<{ projectId: string; workspacePath: string }>(
+      `/api/local/project-mappings/${encodeURIComponent(projectId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ workspacePath }),
+      },
+    );
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 export async function createProjectLabel(projectId: string, label: string): Promise<Project> {
   const data = await request<{ project: Project }>(
     `/api/projects/${encodeURIComponent(projectId)}/labels`,

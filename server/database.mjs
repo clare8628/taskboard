@@ -955,6 +955,16 @@ export class TaskboardDatabase {
     return this.getProject(input.id);
   }
 
+  updateProjectWorkspacePath(id, workspacePath) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE projects
+      SET workspace_path = ?, updated_at = ?
+      WHERE id = ?
+    `).run(workspacePath, timestamp, id);
+    return this.getProject(id);
+  }
+
   ensureJiraProject(name) {
     const timestamp = now();
     this.database.prepare(`

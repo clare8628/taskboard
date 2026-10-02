@@ -113,6 +113,7 @@ interface TaskDetailProps {
   availableLabels: string[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
+  onEditWorkspacePath?: (projectId: string) => void;
   commentsRevision: number;
   attachmentsRevision: number;
   onCreateLabel: (label: string) => Promise<void>;
@@ -401,6 +402,7 @@ export function TaskDetail({
   availableLabels,
   developmentScan,
   developmentScanLoading,
+  onEditWorkspacePath,
   commentsRevision,
   attachmentsRevision,
   onCreateLabel,
@@ -1832,6 +1834,13 @@ export function TaskDetail({
                       ? <BranchIcon color="currentColor" size={14} />
                       : <LinearIcon name="folder" />,
                   })),
+                  ...(onEditWorkspacePath ? [{
+                    value: "__bind_workspace__",
+                    label: developmentScan.workspacePath
+                      ? `${text("修改本地代码路径", "Change workspace path")}: ${developmentScan.workspacePath}`
+                      : text("关联本地代码路径…", "Link local workspace path…"),
+                    icon: <LinearIcon name="folder" />,
+                  }] : []),
                 ]}
                 open={propertyMenu === "development"}
                 disabled={developmentScanLoading || savingProperty === "developmentContext"}
@@ -1841,9 +1850,15 @@ export function TaskDetail({
                 ariaLabel={text("开发上下文", "Development context")}
                 title={currentTask.developmentContext?.type === "worktree" ? currentTask.developmentContext.path : undefined}
                 onOpenChange={(open) => setPropertyMenu(open ? "development" : null)}
-                onChange={(value) => void saveTask({
-                  developmentContext: value ? JSON.parse(value) as DevelopmentContext : null,
-                }, "developmentContext")}
+                onChange={(value) => {
+                  if (value === "__bind_workspace__") {
+                    onEditWorkspacePath?.(currentTask.projectId || "local");
+                    return;
+                  }
+                  void saveTask({
+                    developmentContext: value ? JSON.parse(value) as DevelopmentContext : null,
+                  }, "developmentContext");
+                }}
               />
             </div>
             <label

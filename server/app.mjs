@@ -2065,6 +2065,9 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "INVALID_FIELD", "'workspacePath' must be absolute");
         }
         await cloudConfig.setProjectWorkspace(projectId, workspacePath);
+        try {
+          database.updateProjectWorkspacePath?.(projectId, workspacePath);
+        } catch {}
         return sendJson(response, 200, { projectId, workspacePath });
       }
 
@@ -2290,7 +2293,13 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { projects });
         }
         if (request.method === "POST") {
-          const project = database.createProject(parseProjectCreate(await readJson(request)));
+          const input = parseProjectCreate(await readJson(request));
+          const project = database.createProject(input);
+          if (input.workspacePath) {
+            try {
+              await cloudConfig.setProjectWorkspace(project.id, input.workspacePath);
+            } catch {}
+          }
           events.emit("project.created", { project });
           return sendJson(response, 201, { project });
         }
