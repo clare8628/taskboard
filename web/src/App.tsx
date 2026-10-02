@@ -3743,27 +3743,38 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
-            {selectedProject && (
-              <ProjectAutomationMenu
-                automation={selectedProjectAutomation}
-                models={automationModels}
-                pending={automationPending || automationCatalogLoading}
-                error={automationCatalogError ?? automationError}
-                unavailableReason={automationProjectContext.unavailableReason}
-                onOpen={() => void reconcileProjectAutomation()}
-                onChange={(options) => void saveProjectAutomation(options)}
-                onClaimNow={async () => {
-                  try {
-                    await fetch(resolveTaskboardUrl("/api/local/agent-runner/dispatch"), {
-                      method: "POST",
-                      headers: { "x-taskboard-client": "web-ui" },
-                    });
-                  } catch (_) {
-                    // Best effort local runner trigger
-                  }
-                }}
-              />
-            )}
+            {selectedProject && (() => {
+              // In cloud mode, requests to /api/local/* on the cloud worker return 404.
+              // Derive the companion loopback URL from document.baseURI when running locally,
+              // or default to the well-known local companion port for cloud-hosted access.
+              const baseOrigin = new URL(document.baseURI).origin;
+              const isLoopback = baseOrigin === "http://127.0.0.1:47823"
+                || baseOrigin === "http://localhost:47823"
+                || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(baseOrigin);
+              const companionBase = isLoopback ? baseOrigin : "http://127.0.0.1:47823";
+              return (
+                <ProjectAutomationMenu
+                  automation={selectedProjectAutomation}
+                  models={automationModels}
+                  pending={automationPending || automationCatalogLoading}
+                  error={automationCatalogError ?? automationError}
+                  unavailableReason={automationProjectContext.unavailableReason}
+                  companionUrl={companionBase}
+                  onOpen={() => void reconcileProjectAutomation()}
+                  onChange={(options) => void saveProjectAutomation(options)}
+                  onClaimNow={async () => {
+                    try {
+                      await fetch(`${companionBase}/api/local/agent-runner/dispatch`, {
+                        method: "POST",
+                        headers: { "x-taskboard-client": "web-ui" },
+                      });
+                    } catch (_) {
+                      // Best effort local runner trigger
+                    }
+                  }}
+                />
+              );
+            })()}
             {isJiraProject && (
               <button
                 className="icon-button"

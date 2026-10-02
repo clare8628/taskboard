@@ -1762,13 +1762,19 @@ export function createTaskboardServer(options = {}) {
         request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
       }
 
+      const requestCloudConfig = await cloudConfig.read().catch(() => null);
+      const cloudOrigin = requestCloudConfig?.remoteUrl ? new URL(requestCloudConfig.remoteUrl).origin : null;
+      const activeTrustedOrigins = new Set(resolved.trustedOrigins);
+      if (cloudOrigin) activeTrustedOrigins.add(cloudOrigin);
+
       const configuredTrustedRequest = assertTrustedNetworkRequest(
         request,
         Boolean(resolved.instanceToken),
-        resolved.trustedOrigins,
+        activeTrustedOrigins,
       );
       const origin = request.headers.origin;
       const trustedEmbedOrigin = TRUSTED_EMBED_ORIGINS.has(origin)
+        || activeTrustedOrigins.has(origin)
         || (Boolean(resolved.instanceToken) && origin === "null");
       if (trustedEmbedOrigin) {
         response.setHeader("access-control-allow-origin", origin);
@@ -2206,6 +2212,16 @@ export function createTaskboardServer(options = {}) {
         assertNoQuery(url.searchParams, "POST /api/local/agent-runner/dispatch");
         void agentRunner.checkAndDispatch();
         return sendJson(response, 200, { status: "dispatched" });
+      }
+
+      if (pathname === "/api/local/agent-runner/input") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const body = await readJson(request);
+        if (typeof body.taskId !== "string" || typeof body.input !== "string") {
+          throw new ApiError(400, "INVALID_INPUT", "taskId and input are required");
+        }
+        const success = agentRunner.sendInput(body.taskId, body.input);
+        return sendJson(response, 200, { success });
       }
 
       const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);

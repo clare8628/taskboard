@@ -255,6 +255,20 @@ export class AgentRunner {
     };
   }
 
+  sendInput(taskId, input) {
+    const run = this.activeRuns.get(taskId);
+    if (!run || !run.child || !run.child.stdin) {
+      return false;
+    }
+    try {
+      run.child.stdin.write(input);
+      return true;
+    } catch (e) {
+      console.error(`[AgentRunner] Failed to send input to task ${taskId}:`, e);
+      return false;
+    }
+  }
+
   async restart() {
     await this.close();
     this.closed = false;
@@ -442,7 +456,7 @@ export class AgentRunner {
         const child = this.spawnProcess(executable, args, {
           cwd: workspacePath,
           env: this.processEnv,
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", "pipe"],
         });
         runState.child = child;
 

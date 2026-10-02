@@ -38,6 +38,8 @@ export interface ProjectAutomationMenuProps {
   pending: boolean;
   error: string | null;
   unavailableReason: string | null;
+  /** Local companion URL (e.g. http://127.0.0.1:47823) – required in cloud mode */
+  companionUrl?: string;
   onOpen: () => void;
   onChange: (options: AutomationOptions) => void;
   onClaimNow?: () => Promise<void>;
@@ -185,10 +187,21 @@ export function ProjectAutomationMenu({
   pending,
   error,
   unavailableReason,
+  companionUrl,
   onOpen,
   onChange,
   onClaimNow,
 }: ProjectAutomationMenuProps) {
+  /** Resolve the base URL to use for companion endpoints.
+   * If the web app is on a cloud URL (workers.dev, pages.dev), requests to
+   * /api/local/* will get a 404 from the cloud worker. Instead, always talk
+   * directly to the local companion when we have its URL. */
+  const resolveCompanionUrl = useCallback((path: string): string => {
+    if (companionUrl) {
+      return new URL(path.replace(/^\//, ""), companionUrl.replace(/\/$/, "") + "/").href;
+    }
+    return new URL(path.replace(/^\//, ""), document.baseURI).href;
+  }, [companionUrl]);
   const { locale, text } = useTaskboardI18n();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -207,7 +220,7 @@ export function ProjectAutomationMenu({
 
   const fetchHealth = useCallback(async () => {
     try {
-      const res = await fetch(new URL("api/local/agent-runner/health", document.baseURI), {
+      const res = await fetch(resolveCompanionUrl("api/local/agent-runner/health"), {
         headers: { accept: "application/json", "x-taskboard-client": "web-ui" },
       });
       if (res.ok) {
@@ -229,7 +242,7 @@ export function ProjectAutomationMenu({
         activeRuns: [],
       });
     }
-  }, []);
+  }, [resolveCompanionUrl]);
 
   useEffect(() => {
     void fetchHealth();
@@ -241,7 +254,7 @@ export function ProjectAutomationMenu({
     if (restarting) return;
     setRestarting(true);
     try {
-      await fetch(new URL("api/local/agent-runner/restart", document.baseURI), {
+      await fetch(resolveCompanionUrl("api/local/agent-runner/restart"), {
         method: "POST",
         headers: { "x-taskboard-client": "web-ui" },
       });
@@ -251,6 +264,23 @@ export function ProjectAutomationMenu({
       }
     } finally {
       setRestarting(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!health?.activeRuns.length) return;
+    const taskId = health.activeRuns[0].taskId;
+    try {
+      await fetch(resolveCompanionUrl("api/local/agent-runner/input"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-taskboard-client": "web-ui",
+        },
+        body: JSON.stringify({ taskId, input: "y\n" }),
+      });
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -423,6 +453,40 @@ export function ProjectAutomationMenu({
             {restarting ? text("重启中…", "Restarting…") : text("重启", "Restart")}
           </button>
         </div>
+        {isExecuting && (
+          <div className="project-automation-health-actions" style={{ marginTop: 8, display: "flex", gap: 8, padding: "0 12px 12px" }}>
+            <button
+              type="button"
+              className="primary-button"
+              style={{ flex: 1, padding: "4px 8px", fontSize: 12, height: "auto" }}
+              onClick={() => void handleApprove()}
+              title={text("发送同意 (y) 授权", "Send 'y' to authorize")}
+            >
+              {text("允许 / 授权 (y)", "Approve / Authorize (y)")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ flex: 1, padding: "4px 8px", fontSize: 12, height: "auto" }}
+              onClick={async () => {
+                if (!health?.activeRuns.length) return;
+                const taskId = health.activeRuns[0].taskId;
+                try {
+                  await fetch(resolveCompanionUrl("api/local/agent-runner/input"), {
+                    method: "POST",
+                    headers: { "content-type": "application/json", "x-taskboard-client": "web-ui" },
+                    body: JSON.stringify({ taskId, input: "\n" }),
+                  });
+                } catch (e) {
+                  console.error(e);
+                }
+              }}
+              title={text("发送回车继续", "Send Enter to continue")}
+            >
+              {text("继续 (Enter)", "Continue (Enter)")}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="project-automation-field">
