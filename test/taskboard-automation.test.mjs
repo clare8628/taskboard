@@ -100,6 +100,18 @@ test("the automation host request accepts catalog-provided project automation op
     parseTaskboardAutomationHostRequest({ ...baseRequest, reasoningEffort: "xhigh" })?.reasoningEffort,
     "xhigh",
   );
+  assert.deepEqual(
+    parseTaskboardAutomationHostRequest({ ...baseRequest, agentPlatform: "claude" }),
+    { ...baseRequest, agentPlatform: "claude" },
+  );
+  assert.deepEqual(
+    parseTaskboardAutomationHostRequest({ ...baseRequest, agentPlatform: "agy" }),
+    { ...baseRequest, agentPlatform: "agy" },
+  );
+  assert.equal(
+    parseTaskboardAutomationHostRequest({ ...baseRequest, agentPlatform: "unsupported-agent" }),
+    null,
+  );
   assert.equal(
     parseTaskboardAutomationHostRequest({ ...baseRequest, workspacePath: "relative/path" }),
     null,

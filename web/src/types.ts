@@ -397,6 +397,7 @@ export interface TaskRelations {
 }
 
 export type AgentPlatform = "claude" | "pi" | "agy" | "grok";
+export type AutomationProvider = "codex" | "claude" | "agy";
 
 export interface AgentSession {
   platform: AgentPlatform;

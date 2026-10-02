@@ -15,4 +15,5 @@ src-tauri/gen/
 src-tauri/resources/
 src-tauri/target/
 scratch/
+.vscode/
 

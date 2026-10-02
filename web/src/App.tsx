@@ -130,6 +130,7 @@ import {
   type ActorIdentity,
   type AiChatModel,
   type AiChatThread,
+  type AutomationProvider,
   type CodexProjectIdentity,
   type CodexThreadBinding,
   type DevelopmentScan,
@@ -226,6 +227,7 @@ interface AutomationQuotaStatus {
 
 interface ProjectAutomationRecord {
   automationId?: string;
+  agentPlatform?: AutomationProvider;
   codexProjectId: string;
   codexProjectKind: "local" | "remote";
   codexHostId: string;
@@ -243,7 +245,9 @@ interface ProjectAutomationRecord {
 type ProjectAutomationOptions = Pick<
   ProjectAutomationRecord,
   "enabledByUser" | "quotaAware" | "intervalMinutes" | "model" | "reasoningEffort"
->;
+> & {
+  agentPlatform?: AutomationProvider;
+};
 
 interface AutomationRequestContext {
   taskboardProjectId: string;
@@ -443,6 +447,10 @@ function readProjectAutomations(): ProjectAutomations {
       const reasoningEffort = candidate.reasoningEffort;
       const enabledByUser = candidate.enabledByUser ?? candidate.status === "ACTIVE";
       const quotaAware = candidate.quotaAware ?? false;
+      const agentPlatform: AutomationProvider =
+        candidate.agentPlatform === "claude" || candidate.agentPlatform === "agy"
+          ? candidate.agentPlatform
+          : "codex";
       if (
         (candidate.automationId !== undefined && typeof candidate.automationId !== "string")
         || typeof candidate.codexProjectId !== "string"
@@ -454,14 +462,14 @@ function readProjectAutomations(): ProjectAutomations {
         || typeof model !== "string"
         || !model.trim()
         || typeof reasoningEffort !== "string"
-        || !reasoningEffort.trim()
-        || (candidate.status === "ACTIVE" && !candidate.automationId)
+        || (candidate.status === "ACTIVE" && !candidate.automationId && agentPlatform === "codex")
         || typeof enabledByUser !== "boolean"
         || typeof quotaAware !== "boolean"
       ) continue;
       const quota = isAutomationQuotaStatus(candidate.quota) ? candidate.quota : undefined;
       result[projectId] = {
-        automationId: candidate.automationId,
+        automationId: candidate.automationId ?? (candidate.status === "ACTIVE" ? `${agentPlatform}-auto-${projectId}` : undefined),
+        agentPlatform,
         codexProjectId: candidate.codexProjectId,
         codexProjectKind: candidate.codexProjectKind,
         codexHostId: candidate.codexHostId,
@@ -1066,14 +1074,29 @@ export function App() {
   const automationProjectContext = useMemo<Partial<CodexProjectIdentity> & {
     unavailableReason: string | null;
   }>(() => {
+    if (!selectedProject) {
+      return { unavailableReason: text("请先选择项目", "Select a project first") };
+    }
+
+    const currentProvider = selectedProjectAutomation?.agentPlatform ?? "codex";
+    if (currentProvider !== "codex") {
+      const workspacePath = deviceWorkspacePaths[selectedProject.id]
+        ?? selectedProject.workspacePath
+        ?? "";
+      return {
+        workspacePath,
+        codexProjectId: selectedProject.id,
+        codexProjectKind: "local",
+        codexHostId: "local",
+        unavailableReason: null,
+      };
+    }
+
     if (!embedded || window.parent === window) {
       return { unavailableReason: text("仅可在 Codex App 中使用", "Available only in the Codex app") };
     }
     if (!isLocalTaskboardOrigin(new URL(document.baseURI).origin)) {
       return { unavailableReason: text("仅本地任务面板可用", "Available only on the local taskboard") };
-    }
-    if (!selectedProject) {
-      return { unavailableReason: text("请先选择项目", "Select a project first") };
     }
 
     const savedIdentity = projectCodexIdentities[selectedProject.id];
@@ -1152,12 +1175,30 @@ export function App() {
     manageTaskboardSkillPath,
     projectCodexIdentities,
     selectedProject,
+    selectedProjectAutomation?.agentPlatform,
     text,
   ]);
   const automationRequestContext = useMemo<AutomationRequestContext | null>(() => {
+    if (!selectedProject) return null;
+    const currentProvider = selectedProjectAutomation?.agentPlatform ?? "codex";
+    if (currentProvider !== "codex") {
+      const workspacePath = automationProjectContext.workspacePath
+        ?? deviceWorkspacePaths[selectedProject.id]
+        ?? selectedProject.workspacePath
+        ?? "";
+      return {
+        taskboardProjectId: selectedProject.id,
+        codexProjectId: selectedProject.id,
+        codexProjectKind: "local",
+        codexHostId: "local",
+        projectName: selectedProject.name,
+        workspacePath,
+        remoteProjects: [],
+        skillPath: manageTaskboardSkillPath ?? "",
+      };
+    }
     if (
-      !selectedProject
-      || !automationProjectContext.codexProjectId
+      !automationProjectContext.codexProjectId
       || !automationProjectContext.codexProjectKind
       || !automationProjectContext.codexHostId
       || !automationProjectContext.workspacePath
@@ -1190,7 +1231,14 @@ export function App() {
         : [],
       skillPath: manageTaskboardSkillPath,
     };
-  }, [automationProjectContext, hostContext, manageTaskboardSkillPath, selectedProject]);
+  }, [
+    automationProjectContext,
+    deviceWorkspacePaths,
+    hostContext,
+    manageTaskboardSkillPath,
+    selectedProject,
+    selectedProjectAutomation?.agentPlatform,
+  ]);
   const referenceTasks = useMemo(() => [...tasks, ...archivedTasks], [archivedTasks, tasks]);
   const detailTask = detailTaskIdentifier
     ? referenceTasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
@@ -1336,6 +1384,7 @@ export function App() {
       if (
         record
         && current[projectId]?.automationId === record.automationId
+        && current[projectId]?.agentPlatform === record.agentPlatform
         && current[projectId]?.codexProjectId === record.codexProjectId
         && current[projectId]?.codexProjectKind === record.codexProjectKind
         && current[projectId]?.codexHostId === record.codexHostId
@@ -1391,6 +1440,7 @@ export function App() {
         remoteProjects: context.remoteProjects,
         skillPath: context.skillPath,
         ...(automationId ? { automationId } : {}),
+        agentPlatform: options.agentPlatform ?? "codex",
         enabledByUser: options.enabledByUser,
         quotaAware: options.quotaAware,
         intervalMinutes: options.intervalMinutes,
@@ -1416,35 +1466,70 @@ export function App() {
       setAutomationPending(true);
       setAutomationError(null);
       try {
-        const response = await sendAutomationRequest(
-          "apply-policy",
-          queuedSave.options,
-          queuedSave.context,
-          previousRecord?.automationId,
-        );
-        const item = isAutomationHostItem(response.item) ? response.item : undefined;
-        const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
-        if (!policy) {
-          throw new Error(textRef.current(
-            "Codex 没有返回实际生效的自动化策略",
-            "Codex did not return the effective automation policy.",
-          ));
+        const agentPlatform = queuedSave.options.agentPlatform ?? "codex";
+        if (agentPlatform !== "codex") {
+          if (
+            previousRecord?.agentPlatform === "codex"
+            && previousRecord.status === "ACTIVE"
+            && previousRecord.automationId
+          ) {
+            try {
+              await sendAutomationRequest(
+                "pause",
+                { ...previousRecord, enabledByUser: false },
+                queuedSave.context,
+                previousRecord.automationId,
+              );
+            } catch (_) {
+              // Best effort pause for Codex
+            }
+          }
+          writeProjectAutomation(queuedSave.projectId, {
+            automationId: `${agentPlatform}-auto-${queuedSave.projectId}`,
+            agentPlatform,
+            codexProjectId: queuedSave.context.codexProjectId,
+            codexProjectKind: queuedSave.context.codexProjectKind,
+            codexHostId: queuedSave.context.codexHostId,
+            workspacePath: queuedSave.context.workspacePath,
+            status: queuedSave.options.enabledByUser ? "ACTIVE" : "PAUSED",
+            enabledByUser: queuedSave.options.enabledByUser,
+            quotaAware: false,
+            intervalMinutes: queuedSave.options.intervalMinutes,
+            model: queuedSave.options.model,
+            reasoningEffort: queuedSave.options.reasoningEffort,
+          });
+        } else {
+          const response = await sendAutomationRequest(
+            "apply-policy",
+            queuedSave.options,
+            queuedSave.context,
+            previousRecord?.automationId,
+          );
+          const item = isAutomationHostItem(response.item) ? response.item : undefined;
+          const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
+          if (!policy) {
+            throw new Error(textRef.current(
+              "Codex 没有返回实际生效的自动化策略",
+              "Codex did not return the effective automation policy.",
+            ));
+          }
+          writeProjectAutomation(queuedSave.projectId, {
+            automationId: item?.id ?? policy.automationId,
+            agentPlatform: "codex",
+            codexProjectId: policy.codexProjectId,
+            codexProjectKind: policy.codexProjectKind,
+            codexHostId: policy.codexHostId,
+            workspacePath: policy.workspacePath,
+            status: item?.status ?? "PAUSED",
+            enabledByUser: policy.enabledByUser,
+            quotaAware: policy.quotaAware,
+            ...(response.quota ? { quota: response.quota } : {}),
+            idleReason: response.idleReason,
+            intervalMinutes: policy.intervalMinutes,
+            model: policy.model,
+            reasoningEffort: policy.reasoningEffort,
+          });
         }
-        writeProjectAutomation(queuedSave.projectId, {
-          automationId: item?.id ?? policy.automationId,
-          codexProjectId: policy.codexProjectId,
-          codexProjectKind: policy.codexProjectKind,
-          codexHostId: policy.codexHostId,
-          workspacePath: policy.workspacePath,
-          status: item?.status ?? "PAUSED",
-          enabledByUser: policy.enabledByUser,
-          quotaAware: policy.quotaAware,
-          ...(response.quota ? { quota: response.quota } : {}),
-          idleReason: response.idleReason,
-          intervalMinutes: policy.intervalMinutes,
-          model: policy.model,
-          reasoningEffort: policy.reasoningEffort,
-        });
       } catch (error) {
         writeProjectAutomation(queuedSave.projectId, previousRecord);
         setAutomationError(error instanceof Error
@@ -1462,13 +1547,17 @@ export function App() {
       setAutomationError(null);
       return;
     }
+    const projectId = automationRequestContext.taskboardProjectId;
+    const stored = projectAutomationsRef.current[projectId];
+    if (stored?.agentPlatform && stored.agentPlatform !== "codex") {
+      // Non-Codex automation is managed locally; do not query Codex CDP
+      return;
+    }
     const models = automationCatalog?.projectId === automationRequestContext.taskboardProjectId
       ? automationCatalog.models
       : null;
     if (!models) return;
     if (automationRequestInFlightRef.current) return;
-    const projectId = automationRequestContext.taskboardProjectId;
-    const stored = projectAutomationsRef.current[projectId];
     const initialLoad = !loadedAutomationProjectIdsRef.current.has(projectId);
     automationRequestInFlightRef.current = "list";
     if (initialLoad) setAutomationPending(true);

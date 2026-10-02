@@ -19,6 +19,7 @@ const HOST_REQUEST_FIELDS = new Set([
   "remoteProjects",
   "skillPath",
   "automationId",
+  "agentPlatform",
   "enabledByUser",
   "quotaAware",
   "intervalMinutes",
@@ -65,6 +66,8 @@ export function parseTaskboardAutomationHostRequest(value) {
   if (!validText(value.model, 256) || !validText(value.reasoningEffort, 100)) return null;
   if (value.automationId !== undefined && !validText(value.automationId, 256)) return null;
   if (typeof value.enabledByUser !== "boolean" || typeof value.quotaAware !== "boolean") return null;
+  const agentPlatform = value.agentPlatform ?? "codex";
+  if (agentPlatform !== "codex" && agentPlatform !== "claude" && agentPlatform !== "agy") return null;
 
   return {
     id: value.id,
@@ -82,6 +85,7 @@ export function parseTaskboardAutomationHostRequest(value) {
     ...(value.automationId === undefined ? {} : { automationId: value.automationId }),
     enabledByUser: value.enabledByUser,
     quotaAware: value.quotaAware,
+    ...(value.agentPlatform === undefined ? {} : { agentPlatform: value.agentPlatform }),
     intervalMinutes: value.intervalMinutes,
     model: value.model,
     reasoningEffort: value.reasoningEffort,
