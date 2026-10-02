@@ -74,11 +74,26 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       sessionId,
       "--dangerously-skip-permissions",
     ];
-    if (config.model) {
-      args.push("--model", config.model);
+    let model = config.model || "gemini-3.8-flash-high";
+    let effort = config.reasoningEffort || "";
+
+    // Normalize retired Gemini 2.x models or unrecognized models
+    if (/gemini-2/i.test(model) || !model) {
+      if (/pro/i.test(model)) {
+        model = effort === "low" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high";
+      } else {
+        model = effort === "low" ? "gemini-3.8-flash-low" : effort === "medium" ? "gemini-3.8-flash-medium" : "gemini-3.8-flash-high";
+      }
+      effort = "";
+    } else if (model && /-(low|medium|high)$/i.test(model)) {
+      effort = "";
     }
-    if (config.reasoningEffort) {
-      args.push("--effort", config.reasoningEffort);
+
+    if (model) {
+      args.push("--model", model);
+    }
+    if (effort) {
+      args.push("--effort", effort);
     }
     return args;
   }

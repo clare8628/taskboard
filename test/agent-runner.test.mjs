@@ -45,7 +45,7 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     platform: "agy",
     prompt: "Agy prompt",
     sessionId: "agy-456",
-    config: { model: "gemini-2.5-flash", reasoningEffort: "high" },
+    config: { model: "gemini-3.8-flash-high" },
   });
   assert.deepEqual(agyArgs, [
     "-p",
@@ -54,9 +54,23 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     "agy-456",
     "--dangerously-skip-permissions",
     "--model",
-    "gemini-2.5-flash",
-    "--effort",
-    "high",
+    "gemini-3.8-flash-high",
+  ]);
+
+  const agyLegacyArgs = buildAgentCliArgs({
+    platform: "agy",
+    prompt: "Legacy prompt",
+    sessionId: "agy-789",
+    config: { model: "gemini-2.5-pro", reasoningEffort: "medium" },
+  });
+  assert.deepEqual(agyLegacyArgs, [
+    "-p",
+    "Legacy prompt",
+    "--conversation",
+    "agy-789",
+    "--dangerously-skip-permissions",
+    "--model",
+    "gemini-3.1-pro-high",
   ]);
 
   assert.throws(() => buildAgentCliArgs({ platform: "unknown", prompt: "", sessionId: "" }));
