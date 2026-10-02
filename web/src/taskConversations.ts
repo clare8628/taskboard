@@ -32,6 +32,9 @@ export interface TaskProcessingPresentation {
     platform: string;
     taskId: string;
     lastLine?: string | null;
+    recentLines?: string[];
+    lastOutputAt?: number | null;
+    startedAt?: number;
   };
 }
 
@@ -171,7 +174,7 @@ export function taskCardPresentation(
     total: number | null;
     running: boolean;
   } | null | undefined = undefined,
-  agentRun: { platform: string; taskId: string; lastLine?: string | null } | null = null,
+  agentRun: TaskProcessingPresentation["agentRun"] | null = null,
 ): TaskCardPresentation {
   const conversations = taskConversations(task, aiThreads);
   let runningAi: TaskConversationItem | undefined;

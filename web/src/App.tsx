@@ -2569,7 +2569,9 @@ export function App() {
     return isLoopback ? baseOrigin : "http://127.0.0.1:47823";
   }, []);
 
-  const [agentHealth, setAgentHealth] = useState<{ activeRuns: { taskId: string, platform: string }[] } | null>(null);
+  const [agentHealth, setAgentHealth] = useState<{
+    activeRuns: { taskId: string; platform: string; lastLine?: string | null; recentLines?: string[]; lastOutputAt?: number | null; startedAt?: number }[];
+  } | null>(null);
 
   const fetchAgentHealth = useCallback(async () => {
     try {
@@ -2588,24 +2590,11 @@ export function App() {
 
   useEffect(() => {
     void fetchAgentHealth();
-    const timer = setInterval(fetchAgentHealth, 10_000);
+    const timer = setInterval(fetchAgentHealth, 3_000);
     return () => clearInterval(timer);
   }, [fetchAgentHealth]);
 
   useEffect(() => {
-    const handleAgentInput = async (event: Event) => {
-      const customEvent = event as CustomEvent<{ taskId: string, input: string }>;
-      const { taskId, input } = customEvent.detail;
-      try {
-        await fetch(`${companionBase}/api/local/agent-runner/input`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-taskboard-client": "web-ui" },
-          body: JSON.stringify({ taskId, input }),
-        });
-      } catch (e) {
-        console.error("Failed to send input to agent", e);
-      }
-    };
     const handleAgentAbort = async (event: Event) => {
       const customEvent = event as CustomEvent<{ taskId: string }>;
       const { taskId } = customEvent.detail;
@@ -2619,10 +2608,8 @@ export function App() {
         console.error("Failed to abort agent run", e);
       }
     };
-    window.addEventListener("agent-runner-input", handleAgentInput);
     window.addEventListener("agent-runner-abort", handleAgentAbort);
     return () => {
-      window.removeEventListener("agent-runner-input", handleAgentInput);
       window.removeEventListener("agent-runner-abort", handleAgentAbort);
     };
   }, [companionBase]);

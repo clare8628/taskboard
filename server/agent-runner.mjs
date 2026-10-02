@@ -292,6 +292,7 @@ export class AgentRunner {
         sessionId: run.sessionId,
         startedAt: run.startedAt,
         lastLine: run.lastLine || null,
+        recentLines: run.recentLines || [],
         lastOutputAt: run.lastOutputAt || null,
       })),
       runningProjects: [...this.projectRuns],
@@ -720,6 +721,7 @@ export class AgentRunner {
           const lines = stripAnsi(str).trim().split("\n").filter((l) => l.trim().length > 0);
           if (lines.length > 0) {
             runState.lastLine = lines[lines.length - 1].slice(0, 150);
+            runState.recentLines = [...(runState.recentLines || []), ...lines.map((l) => l.trim().slice(0, 150))].slice(-2);
           }
           checkAndAutoRespond(str, child);
         });
@@ -730,6 +732,7 @@ export class AgentRunner {
           const lines = stripAnsi(str).trim().split("\n").filter((l) => l.trim().length > 0);
           if (lines.length > 0) {
             runState.lastLine = lines[lines.length - 1].slice(0, 150);
+            runState.recentLines = [...(runState.recentLines || []), ...lines.map((l) => l.trim().slice(0, 150))].slice(-2);
           }
           checkAndAutoRespond(str, child);
         });

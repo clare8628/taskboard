@@ -197,10 +197,8 @@ function ProcessingProgress({
 
 function ProcessingLabel({
   processing,
-  agentRun,
 }: {
   processing: TaskCardPresentation["processing"];
-  agentRun?: { platform?: string; lastLine?: string | null } | null;
 }) {
   const { text } = useTaskboardI18n();
   const { running, startedAt } = processing;
@@ -217,27 +215,42 @@ function ProcessingLabel({
     : text("暂停处理", "Processing paused");
 
   return (
-    <span className="task-processing-label" title={agentRun?.lastLine || undefined}>
-      {statusText}
-      {agentRun?.lastLine && (
-        <span
-          className="task-processing-subtext"
-          style={{
-            opacity: 0.8,
-            marginLeft: "4px",
-            fontSize: "11px",
-            maxWidth: "180px",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            display: "inline-block",
-            verticalAlign: "bottom",
-          }}
-        >
-          · {agentRun.lastLine}
-        </span>
+    <span className="task-processing-label">{statusText}</span>
+  );
+}
+
+const AGENT_STALL_MS = 90_000;
+
+function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresentation["processing"]["agentRun"]> }) {
+  const { text } = useTaskboardI18n();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const reference = agentRun.lastOutputAt ?? agentRun.startedAt ?? null;
+  const idleMs = reference ? Math.max(0, now - reference) : 0;
+  const idle = elapsedTime(reference ? new Date(reference).toISOString() : null, now);
+  const stalled = idleMs >= AGENT_STALL_MS;
+  const lines = agentRun.recentLines?.length ? agentRun.recentLines : agentRun.lastLine ? [agentRun.lastLine] : [];
+  const headline = !agentRun.lastOutputAt
+    ? text("等待 agent 首次輸出…", "Waiting for first agent output…")
+    : stalled
+      ? text(`已 ${idle} 無新輸出，可能卡住`, `No new output for ${idle} — may be stuck`)
+      : text(`運作中 · ${idle || "剛剛"} 前有輸出`, `Active · last output ${idle || "just now"} ago`);
+  return (
+    <div className={`task-agent-activity${stalled ? " is-stalled" : ""}`} aria-live="off">
+      <div className="task-agent-activity-line is-headline">
+        <span className="task-agent-activity-dot" aria-hidden="true" />
+        <span className="task-agent-activity-platform">{agentRun.platform}</span>
+        <span className="task-agent-activity-text">{headline}</span>
+      </div>
+      {lines.length > 0 && (
+        <div className="task-agent-activity-line is-output" title={lines.join("\n")}>
+          {lines[lines.length - 1]}
+        </div>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -252,50 +265,28 @@ function ProcessingStatusRow({
   const running = presentation.processing.running;
   const agentRun = presentation.processing.agentRun;
   return (
+    <>
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
-      <ProcessingLabel processing={presentation.processing} agentRun={agentRun} />
+      <ProcessingLabel processing={presentation.processing} />
       <span className="task-processing-spacer" aria-hidden="true" />
-      
+
       {agentRun && (
-        <div className="task-processing-actions" style={{ display: "flex", gap: "4px", marginRight: "8px" }}>
-          <button
-            type="button"
-            className="primary-button"
-            style={{ padding: "2px 6px", fontSize: "11px", height: "auto" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              window.dispatchEvent(new CustomEvent("agent-runner-input", { detail: { taskId: agentRun.taskId, input: "y\n" } }));
-            }}
-            title={text("發送同意 (y) 授權（系統亦會自動應答）", "Send 'y' to authorize (auto-approved automatically)")}
-          >
-            {text("允許(y)", "Approve(y)")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            style={{ padding: "2px 6px", fontSize: "11px", height: "auto" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              window.dispatchEvent(new CustomEvent("agent-runner-input", { detail: { taskId: agentRun.taskId, input: "\n" } }));
-            }}
-            title={text("發送 Enter 繼續（系統亦會自動應答）", "Send Enter to continue (auto-approved automatically)")}
-          >
-            {text("繼續(Enter)", "Continue(Enter)")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            style={{ padding: "2px 6px", fontSize: "11px", height: "auto", color: "var(--taskboard-danger, #e53e3e)" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              window.dispatchEvent(new CustomEvent("agent-runner-abort", { detail: { taskId: agentRun.taskId } }));
-            }}
-            title={text("強制終止執行並退回待辦", "Force abort running agent and revert to todo")}
-          >
-            {text("中止", "Abort")}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="task-agent-stop"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(new CustomEvent("agent-runner-abort", { detail: { taskId: agentRun.taskId } }));
+          }}
+          title={text("停止執行並退回待辦", "Stop the agent and move the task back to todo")}
+          aria-label={text("停止", "Stop")}
+        >
+          <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
+            <rect x="0.5" y="0.5" width="7" height="7" rx="1.5" fill="currentColor" />
+          </svg>
+          {text("停止", "Stop")}
+        </button>
       )}
 
       {presentation.conversations.length > 0 && (
@@ -305,6 +296,8 @@ function ProcessingStatusRow({
         />
       )}
     </div>
+    {agentRun && <AgentActivityLines agentRun={agentRun} />}
+    </>
   );
 }
 
