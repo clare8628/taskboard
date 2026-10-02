@@ -1806,10 +1806,11 @@ export function createTaskboardServer(options = {}) {
       const pathname = url.pathname;
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
       const isDevelopmentContextsRoute = /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
+      const isAgentRunnerRoute = pathname.startsWith("/api/local/agent-runner/");
       if (
         configuredTrustedRequest
         && (
-          pathname.startsWith("/api/local/")
+          (pathname.startsWith("/api/local/") && !isAgentRunnerRoute)
           || pathname === "/api/device-workspaces"
           || isDevelopmentContextsRoute
         )
