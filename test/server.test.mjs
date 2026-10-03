@@ -154,6 +154,21 @@ test("launcher mode proves service identity and hides every route behind its ins
   });
   assert.equal(launcherApi.response.status, 200);
   assert.equal(launcherApi.response.headers.get("access-control-allow-origin"), "null");
+
+  const agentRunnerHealthDirect = await request(baseUrl, "/api/local/agent-runner/health");
+  assert.equal(agentRunnerHealthDirect.response.status, 200);
+
+  const agentRunnerCorsOptions = await request(baseUrl, "/api/local/agent-runner/health", {
+    method: "OPTIONS",
+    headers: {
+      origin: "http://localhost:5173",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "accept, x-taskboard-client",
+    },
+  });
+  assert.equal(agentRunnerCorsOptions.response.status, 204);
+  assert.equal(agentRunnerCorsOptions.response.headers.get("access-control-allow-origin"), "http://localhost:5173");
+  assert.equal(agentRunnerCorsOptions.response.headers.get("access-control-allow-private-network"), "true");
 });
 
 test("existing task and comment thread attribution remains content-specific", async () => {

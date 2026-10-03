@@ -1747,7 +1747,9 @@ export function createTaskboardServer(options = {}) {
     response.setHeader("referrer-policy", "no-referrer");
     try {
       const incomingUrl = new URL(request.url, "http://127.0.0.1");
-      if (resolved.instanceToken && incomingUrl.pathname !== "/health") {
+      const isAgentRunnerPath = incomingUrl.pathname.startsWith("/api/local/agent-runner/")
+        || (Boolean(routePrefix) && incomingUrl.pathname.startsWith(`${routePrefix}/api/local/agent-runner/`));
+      if (resolved.instanceToken && incomingUrl.pathname !== "/health" && !isAgentRunnerPath) {
         if (incomingUrl.pathname === routePrefix) {
           response.writeHead(301, { location: `${incomingUrl.pathname}/${incomingUrl.search}` });
           response.end();
@@ -1759,6 +1761,8 @@ export function createTaskboardServer(options = {}) {
         ) {
           throw new ApiError(404, "NOT_FOUND", "Route not found");
         }
+        request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
+      } else if (routePrefix && incomingUrl.pathname.startsWith(`${routePrefix}/`)) {
         request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
       }
 
@@ -1773,8 +1777,15 @@ export function createTaskboardServer(options = {}) {
         activeTrustedOrigins,
       );
       const origin = request.headers.origin;
+      let isLoopbackOrigin = false;
+      if (origin) {
+        try {
+          isLoopbackOrigin = isTrustedNetworkHost(new URL(origin).hostname);
+        } catch {}
+      }
       const trustedEmbedOrigin = TRUSTED_EMBED_ORIGINS.has(origin)
         || activeTrustedOrigins.has(origin)
+        || isLoopbackOrigin
         || (Boolean(resolved.instanceToken) && origin === "null");
       if (trustedEmbedOrigin) {
         response.setHeader("access-control-allow-origin", origin);

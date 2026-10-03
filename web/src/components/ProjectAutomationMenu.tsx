@@ -227,6 +227,7 @@ export function ProjectAutomationMenu({
   const [secondsRemaining, setSecondsRemaining] = useState<number>(() => (draft.intervalMinutes ?? 5) * 60);
   const [health, setHealth] = useState<AgentHealthInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [restartMessage, setRestartMessage] = useState<string | null>(null);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -263,34 +264,28 @@ export function ProjectAutomationMenu({
   const handleRestart = async () => {
     if (restarting) return;
     setRestarting(true);
+    setRestartMessage(text("正在重启本地伴侣服务…", "Restarting local companion…"));
     try {
-      await fetch(resolveCompanionUrl("api/local/agent-runner/restart"), {
+      const res = await fetch(resolveCompanionUrl("api/local/agent-runner/restart"), {
         method: "POST",
         headers: { "x-taskboard-client": "web-ui" },
       });
-      await fetchHealth();
-      if (onClaimNow) {
-        await onClaimNow();
+      if (res.ok) {
+        await fetchHealth();
+        setRestartMessage(text("本地伴侣服务已重启就绪", "Local companion restarted"));
+        setTimeout(() => setRestartMessage(null), 3000);
+        if (onClaimNow) {
+          await onClaimNow();
+        }
+      } else {
+        setRestartMessage(text("重启失败，服务端返回异常", "Restart failed; server error"));
+        setTimeout(() => setRestartMessage(null), 4000);
       }
+    } catch {
+      setRestartMessage(text("无法连线本地伴侣服务，请确认 Codex Taskboard 桌面应用已启动", "Cannot connect to local companion; please ensure Codex Taskboard is running"));
+      setTimeout(() => setRestartMessage(null), 5000);
     } finally {
       setRestarting(false);
-    }
-  };
-
-  const handleApprove = async () => {
-    if (!health?.activeRuns.length) return;
-    const taskId = health.activeRuns[0].taskId;
-    try {
-      await fetch(resolveCompanionUrl("api/local/agent-runner/input"), {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-taskboard-client": "web-ui",
-        },
-        body: JSON.stringify({ taskId, input: "y\n" }),
-      });
-    } catch (e) {
-      console.error(e);
     }
   };
 
@@ -502,6 +497,11 @@ export function ProjectAutomationMenu({
             {restarting ? text("重启中…", "Restarting…") : text("重启", "Restart")}
           </button>
         </div>
+        {restartMessage && (
+          <div style={{ padding: "0 12px 8px", fontSize: 11, color: "var(--color-text-secondary, #6b7280)" }}>
+            {restartMessage}
+          </div>
+        )}
         {!isExecuting && (
           (draft.agentPlatform === "claude" && health?.claude.installed && !health.claude.authenticated) ||
           (draft.agentPlatform === "agy" && health?.agy.installed && !health.agy.authenticated)
@@ -525,40 +525,6 @@ export function ProjectAutomationMenu({
                 {authMessage}
               </div>
             )}
-          </div>
-        )}
-        {isExecuting && (
-          <div className="project-automation-health-actions" style={{ marginTop: 8, display: "flex", gap: 8, padding: "0 12px 12px" }}>
-            <button
-              type="button"
-              className="primary-button"
-              style={{ flex: 1, padding: "4px 8px", fontSize: 12, height: "auto" }}
-              onClick={() => void handleApprove()}
-              title={text("发送同意 (y) 授权", "Send 'y' to authorize")}
-            >
-              {text("允许 / 授权 (y)", "Approve / Authorize (y)")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ flex: 1, padding: "4px 8px", fontSize: 12, height: "auto" }}
-              onClick={async () => {
-                if (!health?.activeRuns.length) return;
-                const taskId = health.activeRuns[0].taskId;
-                try {
-                  await fetch(resolveCompanionUrl("api/local/agent-runner/input"), {
-                    method: "POST",
-                    headers: { "content-type": "application/json", "x-taskboard-client": "web-ui" },
-                    body: JSON.stringify({ taskId, input: "\n" }),
-                  });
-                } catch (e) {
-                  console.error(e);
-                }
-              }}
-              title={text("发送回车继续", "Send Enter to continue")}
-            >
-              {text("继续 (Enter)", "Continue (Enter)")}
-            </button>
           </div>
         )}
       </div>
