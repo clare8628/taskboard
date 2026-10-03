@@ -8,6 +8,7 @@ import {
   buildAgentTaskPrompt,
   detectInteractivePrompt,
   evaluateTaskEligibility,
+  normalizeWorkspacePath,
   resolveAgentExecutable,
   stripAnsi,
 } from "../server/agent-runner.mjs";
@@ -75,7 +76,34 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     "gemini-3.1-pro-high",
   ]);
 
+  const agyCrossModelArgs = buildAgentCliArgs({
+    platform: "agy",
+    prompt: "Cross model prompt",
+    sessionId: "agy-999",
+    config: { model: "sonnet" },
+  });
+  assert.deepEqual(agyCrossModelArgs, [
+    "-p",
+    "Cross model prompt",
+    "--conversation",
+    "agy-999",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-sonnet-5-5-medium",
+  ]);
+
   assert.throws(() => buildAgentCliArgs({ platform: "unknown", prompt: "", sessionId: "" }));
+});
+
+test("normalizeWorkspacePath correctly unescapes shell escaped paths on posix", () => {
+  if (process.platform !== "win32") {
+    const raw = "/Users/test/Library/Mobile\\ Documents/com\\~apple\\~CloudDocs/My\\ Folder";
+    const cleaned = normalizeWorkspacePath(raw);
+    assert.equal(cleaned, "/Users/test/Library/Mobile Documents/com~apple~CloudDocs/My Folder");
+
+    assert.equal(normalizeWorkspacePath(""), "");
+    assert.equal(normalizeWorkspacePath("   "), "");
+  }
 });
 
 test("buildAgentTaskPrompt includes task identifier, title, description, and workspace", () => {

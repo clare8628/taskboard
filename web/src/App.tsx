@@ -77,7 +77,7 @@ import {
   RefreshIcon,
   RelationIcon,
 } from "./components/SemanticIcons";
-import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { ProjectAutomationMenu, getProviderModels } from "./components/ProjectAutomationMenu";
 import { TaskboardIcon } from "./components/TaskboardIcon";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
@@ -934,9 +934,18 @@ export function App() {
     setDashboardSummaryAnimatedProjectId(projectId);
   }, []);
 
+  const normalizeWorkspaceInput = (raw: string): string => {
+    let p = raw.trim();
+    if (!p) return "";
+    if (p.startsWith("/") || p.startsWith("~")) {
+      p = p.replace(/\\(.)/g, "$1");
+    }
+    return p;
+  };
+
   const rememberDeviceWorkspacePath = useCallback((projectId: string, workspacePath: string) => {
     const targetId = projectId || GLOBAL_PROJECT_ID;
-    const normalizedPath = workspacePath.trim();
+    const normalizedPath = normalizeWorkspaceInput(workspacePath);
     setDeviceWorkspacePaths((current) => {
       if (current[targetId] === normalizedPath || (!normalizedPath && !(targetId in current))) {
         return current;
@@ -951,7 +960,7 @@ export function App() {
 
   const handleUpdateWorkspacePath = useCallback(async (projectId: string, workspacePath: string) => {
     const targetId = projectId || GLOBAL_PROJECT_ID;
-    const normalized = workspacePath.trim();
+    const normalized = normalizeWorkspaceInput(workspacePath);
     if (!normalized) return;
     // Changing the remembered path re-runs the development scan effect for the active project.
     rememberDeviceWorkspacePath(targetId, normalized);
@@ -1732,6 +1741,25 @@ export function App() {
     selectedProject,
     writeProjectAutomation,
   ]);
+
+  const seededAutomationProjectIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!selectedProject || embedded) return;
+    const projectId = selectedProject.id;
+    if (projectAutomations[projectId] || seededAutomationProjectIdsRef.current.has(projectId)) return;
+    seededAutomationProjectIdsRef.current.add(projectId);
+    const model = getProviderModels("agy", [])[0];
+    if (!model) return;
+    // Default: auto-claim on, executed by AGY.
+    saveProjectAutomation({
+      agentPlatform: "agy",
+      enabledByUser: true,
+      quotaAware: false,
+      intervalMinutes: 5,
+      model: model.slug,
+      reasoningEffort: model.defaultReasoningEffort,
+    });
+  }, [embedded, projectAutomations, saveProjectAutomation, selectedProject]);
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);

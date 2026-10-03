@@ -12,6 +12,24 @@ import { signalProcessTree } from "../shared/process-tree.mjs";
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const MAX_COMMENT_LENGTH = 30_000;
 
+export function normalizeWorkspacePath(rawPath) {
+  if (typeof rawPath !== "string") return "";
+  let p = rawPath.trim();
+  if (!p) return "";
+  if (process.platform !== "win32") {
+    // Unescape shell escapes (e.g. \ , \~, \(, \), \[, \], etc.)
+    if (p.includes("\\")) {
+      p = p.replace(/\\(.)/g, "$1");
+    }
+    // Expand ~ to user homedir if at start
+    if (p === "~" || p.startsWith("~/")) {
+      const home = process.env.HOME || os.homedir();
+      p = path.join(home, p.slice(1));
+    }
+  }
+  return path.resolve(p);
+}
+
 /**
  * Resolve the CLI executable path for claude or agy.
  */
@@ -112,6 +130,8 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       if (/opus/i.test(model)) model = "opus";
       else if (/haiku/i.test(model)) model = "haiku";
       else model = "sonnet";
+    } else if (/gemini|gpt/i.test(model) || !model) {
+      model = "sonnet";
     }
     args.push("--model", model);
     return args;
@@ -125,13 +145,17 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       sessionId,
       "--dangerously-skip-permissions",
     ];
-    let model = config.model || "gemini-3.8-flash-high";
+    let model = config.model;
     let effort = config.reasoningEffort || "";
 
-    // Normalize retired Gemini 2.x models or unrecognized models
-    if (/gemini-2/i.test(model) || !model) {
-      if (/pro/i.test(model)) {
+    // Normalize model if from claude (e.g. sonnet/opus/haiku) or empty or legacy gemini-2
+    if (!model || ["sonnet", "opus", "haiku"].includes(model) || /gemini-2/i.test(model)) {
+      if (/pro/i.test(model || "")) {
         model = effort === "low" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high";
+      } else if (model === "sonnet") {
+        model = "claude-sonnet-5-5-medium";
+      } else if (model === "opus") {
+        model = "claude-opus-5-5-medium";
       } else {
         model = effort === "low" ? "gemini-3.8-flash-low" : effort === "medium" ? "gemini-3.8-flash-medium" : "gemini-3.8-flash-high";
       }
@@ -242,6 +266,7 @@ export class AgentRunner {
 
     this.activeRuns = new Map(); // taskId -> { child, promise, platform, sessionId, startedAt }
     this.projectRuns = new Set(); // projectId
+    this.authCache = new Map(); // platform -> { authenticated: boolean, timestamp: number }
     this.closed = false;
     this.timer = null;
     this.eventListeners = [];
@@ -340,13 +365,21 @@ export class AgentRunner {
       return false;
     }
 
+    if (!explicitPath) {
+      const cached = this.authCache.get(platform);
+      if (cached && Date.now() - cached.timestamp < 300_000) {
+        return cached.authenticated;
+      }
+    }
+
     const execEnv = this.getExecutionEnv();
 
+    let authenticated = false;
     if (platform === "claude") {
       let output = "";
       try {
         const { stdout } = await execFileAsync(executable, ["auth", "status"], {
-          timeout: 4000,
+          timeout: 8000,
           env: execEnv,
         });
         output = stdout;
@@ -357,36 +390,39 @@ export class AgentRunner {
       if (match) {
         try {
           const data = JSON.parse(match[0]);
-          return Boolean(data.loggedIn);
+          authenticated = Boolean(data.loggedIn);
         } catch {}
       }
-      return false;
-    }
-
-    if (platform === "agy") {
+    } else if (platform === "agy") {
       try {
         const { stdout, stderr } = await execFileAsync(executable, ["models"], {
-          timeout: 4000,
+          timeout: 20000,
           env: execEnv,
         });
         const combined = `${stdout} ${stderr}`;
-        if (/please sign in/i.test(combined) || /authentication required/i.test(combined)) {
-          return false;
+        if (!/please sign in/i.test(combined) && !/authentication required/i.test(combined)) {
+          authenticated = true;
         }
-        return true;
       } catch (err) {
         const combined = `${err.stdout || ""} ${err.stderr || ""} ${err.message || ""}`;
-        if (/please sign in/i.test(combined) || /authentication required/i.test(combined)) {
-          return false;
+        if (!/please sign in/i.test(combined) && !/authentication required/i.test(combined)) {
+          // If previously authenticated, do not revoke on transient network/timeout error
+          const prev = this.authCache.get(platform);
+          if (prev?.authenticated) {
+            authenticated = true;
+          }
         }
-        return false;
       }
     }
 
-    return false;
+    if (!explicitPath) {
+      this.authCache.set(platform, { authenticated, timestamp: Date.now() });
+    }
+    return authenticated;
   }
 
   async launchAuth(platform) {
+    this.authCache.delete(platform);
     const isMac = process.platform === "darwin";
     const cmd = platform === "claude" ? "claude auth login" : "agy";
 
@@ -545,10 +581,9 @@ export class AgentRunner {
       const project = (projectsPayload.projects || []).find((p) => p.id === projectId);
       if (!project) return;
 
-      let workspacePath = project.workspacePath || config.workspacePath || process.cwd();
-      if (typeof workspacePath === "string") {
-        workspacePath = workspacePath.replace(/\\ /g, " ");
-      }
+      let workspacePath = normalizeWorkspacePath(
+        project.workspacePath || config.workspacePath || process.cwd(),
+      );
 
       // 2. Fetch todo tasks
       const tasksRes = await this.fetch(
@@ -648,11 +683,12 @@ export class AgentRunner {
     }
 
     // 2. Prepare CLI command & arguments
+    const targetWorkspace = normalizeWorkspacePath(workspacePath);
     const executable = resolveAgentExecutable(
       platform,
       platform === "claude" ? this.claudeExecutable : this.agyExecutable,
     );
-    const prompt = buildAgentTaskPrompt({ project, task, workspacePath });
+    const prompt = buildAgentTaskPrompt({ project, task, workspacePath: targetWorkspace });
     const args = buildAgentCliArgs({ platform, prompt, sessionId, config });
 
     const runState = {
@@ -708,7 +744,7 @@ export class AgentRunner {
 
       try {
         const child = this.spawnProcess(executable, args, {
-          cwd: workspacePath,
+          cwd: targetWorkspace,
           env: this.processEnv,
           stdio: ["pipe", "pipe", "pipe"],
         });
@@ -737,12 +773,26 @@ export class AgentRunner {
           checkAndAutoRespond(str, child);
         });
         child.on("error", (err) => {
+          if (err && err.code === "ENOENT") {
+            try {
+              accessSync(targetWorkspace, constants.R_OK);
+            } catch {
+              err.message = `${err.message} (工作目錄不存在或無法存取: "${targetWorkspace}")`;
+            }
+          }
           errorOccurred = err;
         });
         child.on("close", (exitCode, signal) => {
           resolve({ exitCode, signal, stdout, stderr, error: errorOccurred });
         });
       } catch (err) {
+        if (err && err.code === "ENOENT") {
+          try {
+            accessSync(targetWorkspace, constants.R_OK);
+          } catch {
+            err.message = `${err.message} (工作目錄不存在或無法存取: "${targetWorkspace}")`;
+          }
+        }
         resolve({ exitCode: 1, signal: null, stdout: "", stderr: "", error: err });
       }
     });

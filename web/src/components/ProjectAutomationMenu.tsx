@@ -174,7 +174,7 @@ function automationOptions(
   models: AiChatModel[],
   automation?: Partial<AutomationState>,
 ): AutomationOptions {
-  const agentPlatform: AutomationProvider = automation?.agentPlatform ?? "codex";
+  const agentPlatform: AutomationProvider = automation?.agentPlatform ?? "agy";
   const providerModels = getProviderModels(agentPlatform, models);
   const model = providerModels.find((candidate) => candidate.slug === automation?.model) ?? providerModels[0];
   const reasoningEffort = model?.supportedReasoningEfforts.includes(automation?.reasoningEffort ?? "")
@@ -182,7 +182,7 @@ function automationOptions(
     : model?.defaultReasoningEffort;
   return {
     agentPlatform,
-    enabledByUser: automation?.enabledByUser ?? false,
+    enabledByUser: automation?.enabledByUser ?? true,
     quotaAware: agentPlatform === "codex" ? (automation?.quotaAware ?? false) : false,
     intervalMinutes: automation?.intervalMinutes ?? 5,
     model: model?.slug ?? "",

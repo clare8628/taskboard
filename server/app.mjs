@@ -1734,7 +1734,7 @@ export function createTaskboardServer(options = {}) {
     apiBaseUrl: () => {
       const addr = server?.address();
       const port = addr && typeof addr === "object" ? addr.port : resolvePort();
-      return `http://127.0.0.1:${port}`;
+      return routePrefix ? `http://127.0.0.1:${port}${routePrefix}` : `http://127.0.0.1:${port}`;
     },
     events,
     claudeExecutable: options.claudeExecutable,
