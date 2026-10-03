@@ -2642,6 +2642,39 @@ export function App() {
     };
   }, [companionBase]);
 
+  const [pickingDirectory, setPickingDirectory] = useState(false);
+
+  const handlePickDirectory = useCallback(async (currentPath?: string): Promise<string | null> => {
+    setPickingDirectory(true);
+    try {
+      const res = await fetch(`${companionBase}/api/local/agent-runner/choose-directory`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          "x-taskboard-client": "web-ui",
+        },
+        body: JSON.stringify({
+          initialPath: currentPath || "",
+          prompt: "請選擇專案本地目錄",
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json() as { canceled?: boolean; path?: string | null };
+      if (!data.canceled && data.path) {
+        return data.path;
+      }
+      return null;
+    } catch (err) {
+      console.warn("Failed to choose directory via companion:", err);
+      return null;
+    } finally {
+      setPickingDirectory(false);
+    }
+  }, [companionBase]);
+
   const aiThreadsByTask = useMemo(() => indexAiThreadsByTask(aiThreads), [aiThreads]);
   const taskPresentations = useMemo(() => Object.fromEntries(tasks.map((task) => {
     const storageKey = issueReadStorageKey(issueReadMode, task);
@@ -4402,13 +4435,30 @@ export function App() {
             <h2 id="workspace-path-title">{text("本地代码路径", "Workspace path")} · {workspacePathEditor.projectName}</h2>
             <label>
               <span>{text("此项目在本设备上的绝对路径", "Absolute path of this project on this device")}</span>
-              <input
-                autoFocus
-                required
-                placeholder={text("例如 /Users/clare/.../project", "e.g. /Users/clare/.../project")}
-                value={workspacePathEditor.path}
-                onChange={(event) => setWorkspacePathEditor({ ...workspacePathEditor, path: event.target.value })}
-              />
+              <div className="workspace-path-input-group">
+                <input
+                  autoFocus
+                  required
+                  placeholder={text("例如 /Users/clare/.../project", "e.g. /Users/clare/.../project")}
+                  value={workspacePathEditor.path}
+                  onChange={(event) => setWorkspacePathEditor({ ...workspacePathEditor, path: event.target.value })}
+                />
+                <button
+                  type="button"
+                  className="button secondary workspace-path-browse-btn"
+                  disabled={pickingDirectory}
+                  onClick={async () => {
+                    const picked = await handlePickDirectory(workspacePathEditor.path);
+                    if (picked) {
+                      setWorkspacePathEditor((prev) => (prev ? { ...prev, path: picked } : null));
+                    }
+                  }}
+                  title={text("打开文件管理窗口挑选目录", "Browse directory...")}
+                >
+                  <LinearIcon name="folder" />
+                  <span>{pickingDirectory ? text("选择中...", "Selecting...") : text("浏览...", "Browse...")}</span>
+                </button>
+              </div>
             </label>
             <div>
               <button className="button secondary" type="button" onClick={() => setWorkspacePathEditor(null)}>
@@ -4455,11 +4505,28 @@ export function App() {
             </label>
             <label>
               <span>{text("本地代码路径（可选）", "Local workspace path (optional)")}</span>
-              <input
-                placeholder={text("例如 /Users/clare/.../project", "e.g. /Users/clare/.../project")}
-                value={projectWorkspacePath}
-                onChange={(event) => setProjectWorkspacePath(event.target.value)}
-              />
+              <div className="workspace-path-input-group">
+                <input
+                  placeholder={text("例如 /Users/clare/.../project", "e.g. /Users/clare/.../project")}
+                  value={projectWorkspacePath}
+                  onChange={(event) => setProjectWorkspacePath(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="button secondary workspace-path-browse-btn"
+                  disabled={pickingDirectory}
+                  onClick={async () => {
+                    const picked = await handlePickDirectory(projectWorkspacePath);
+                    if (picked) {
+                      setProjectWorkspacePath(picked);
+                    }
+                  }}
+                  title={text("打开文件管理窗口挑选目录", "Browse directory...")}
+                >
+                  <LinearIcon name="folder" />
+                  <span>{pickingDirectory ? text("选择中...", "Selecting...") : text("浏览...", "Browse...")}</span>
+                </button>
+              </div>
             </label>
             {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
             <div>

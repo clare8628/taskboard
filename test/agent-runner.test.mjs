@@ -6,6 +6,7 @@ import {
   AgentRunner,
   buildAgentCliArgs,
   buildAgentTaskPrompt,
+  chooseSystemDirectory,
   detectInteractivePrompt,
   evaluateTaskEligibility,
   normalizeWorkspacePath,
@@ -741,6 +742,10 @@ test("AgentRunner abortTask terminates child process and tracks lastLine", async
   assert.equal(runner.status().activeRuns.length, 0);
 
   await runner.close();
+});
+
+test("chooseSystemDirectory is an exported async function", () => {
+  assert.equal(typeof chooseSystemDirectory, "function");
 });
 
 

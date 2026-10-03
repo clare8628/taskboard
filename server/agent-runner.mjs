@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -978,3 +978,89 @@ export class AgentRunner {
     this.projectRuns.clear();
   }
 }
+
+/**
+ * Open a native OS folder selection dialog and return the selected path.
+ * Supports macOS (osascript), Windows (PowerShell FolderBrowserDialog), and Linux (zenity/kdialog).
+ */
+export async function chooseSystemDirectory({ initialPath = "", prompt = "請選擇目錄" } = {}) {
+  const normInitial = normalizeWorkspacePath(initialPath);
+  const initialExists = Boolean(normInitial && existsSync(normInitial));
+
+  if (process.platform === "darwin") {
+    let script = `tell application "System Events"\nactivate\n`;
+    if (initialExists) {
+      const safePath = normInitial.replace(/"/g, '\\"');
+      script += `set chosenFolder to choose folder with prompt "${prompt.replace(/"/g, '\\"')}" default location (POSIX file "${safePath}")\n`;
+    } else {
+      script += `set chosenFolder to choose folder with prompt "${prompt.replace(/"/g, '\\"')}"\n`;
+    }
+    script += `POSIX path of chosenFolder\nend tell`;
+
+    try {
+      const { stdout } = await execFileAsync("osascript", ["-e", script]);
+      const chosen = stdout.trim();
+      if (!chosen) {
+        return { canceled: true, path: null };
+      }
+      return { canceled: false, path: chosen.replace(/\/$/, "") };
+    } catch (err) {
+      const message = String(err?.stderr || err?.message || "");
+      if (message.includes("-128") || message.includes("User cancelled")) {
+        return { canceled: true, path: null };
+      }
+      throw err;
+    }
+  } else if (process.platform === "win32") {
+    const psScript = `
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = "${(prompt || 'Select Folder').replace(/"/g, '`"')}"
+${initialExists ? `$dialog.SelectedPath = "${normInitial.replace(/"/g, '`"')}"` : ''}
+$dialog.ShowNewFolderButton = $true
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  Write-Output $dialog.SelectedPath
+} else {
+  Write-Output "__CANCELED__"
+}
+`;
+    try {
+      const { stdout } = await execFileAsync("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript]);
+      const chosen = stdout.trim();
+      if (!chosen || chosen.includes("__CANCELED__")) {
+        return { canceled: true, path: null };
+      }
+      return { canceled: false, path: chosen };
+    } catch (err) {
+      throw err;
+    }
+  } else {
+    // Linux
+    try {
+      const args = ["--file-selection", "--directory", `--title=${prompt}`];
+      if (initialExists) {
+        args.push(`--filename=${normInitial}/`);
+      }
+      const { stdout } = await execFileAsync("zenity", args);
+      const chosen = stdout.trim();
+      if (!chosen) return { canceled: true, path: null };
+      return { canceled: false, path: chosen.replace(/\/$/, "") };
+    } catch (err) {
+      if (err?.code === 1) {
+        return { canceled: true, path: null };
+      }
+      try {
+        const kArgs = ["--getexistingdirectory", initialExists ? normInitial : (process.env.HOME || "/")];
+        const { stdout } = await execFileAsync("kdialog", kArgs);
+        const chosen = stdout.trim();
+        if (!chosen) return { canceled: true, path: null };
+        return { canceled: false, path: chosen.replace(/\/$/, "") };
+      } catch (kErr) {
+        if (kErr?.code === 1) return { canceled: true, path: null };
+        throw new Error("No supported dialog tool found (zenity or kdialog required on Linux)");
+      }
+    }
+  }
+}
+

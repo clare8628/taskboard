@@ -4336,6 +4336,36 @@ kbd {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+.workspace-path-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.workspace-path-input-group input {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-path-browse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  white-space: nowrap;
+  font-size: 12px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.workspace-path-browse-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .jira-connection-dialog {
   width: min(400px, 100%);
 }

@@ -46,7 +46,7 @@ import { TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
-import { AgentRunner } from "./agent-runner.mjs";
+import { AgentRunner, chooseSystemDirectory } from "./agent-runner.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -2253,6 +2253,16 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "INVALID_PLATFORM", "platform must be claude or agy");
         }
         const result = await agentRunner.launchAuth(body.platform);
+        return sendJson(response, 200, result);
+      }
+
+      if (pathname === "/api/local/agent-runner/choose-directory") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const body = (await readJson(request).catch(() => ({}))) || {};
+        const result = await chooseSystemDirectory({
+          initialPath: typeof body.initialPath === "string" ? body.initialPath : "",
+          prompt: typeof body.prompt === "string" ? body.prompt : "請選擇專案目錄",
+        });
         return sendJson(response, 200, result);
       }
 
