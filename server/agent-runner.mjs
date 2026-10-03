@@ -113,6 +113,72 @@ export function detectInteractivePrompt(rawText) {
   return null;
 }
 
+export const KNOWN_AGY_MODELS = new Set([
+  "gemini-3.8-flash-high",
+  "gemini-3.8-flash-medium",
+  "gemini-3.8-flash-low",
+  "gemini-3.7-flash-high",
+  "gemini-3.7-flash-medium",
+  "gemini-3.7-flash-low",
+  "gemini-3.6-flash-high",
+  "gemini-3.6-flash-medium",
+  "gemini-3.6-flash-low",
+  "gemini-3.1-pro-high",
+  "gemini-3.1-pro-low",
+  "claude-opus-5-5-low",
+  "claude-opus-5-5-medium",
+  "claude-opus-5-5-high",
+  "claude-sonnet-5-5-low",
+  "claude-sonnet-5-5-medium",
+  "claude-sonnet-5-5-high",
+  "gpt-oss-120b-medium",
+]);
+
+/**
+ * Normalize model identifier for Google Antigravity (AGY) CLI.
+ * AGY encodes reasoning effort directly into model slugs (e.g. claude-sonnet-5-5-medium).
+ * AGY CLI does not support a separate --effort flag for Claude aliases like "sonnet".
+ */
+export function normalizeAgyModel(rawModel, rawEffort = "") {
+  let m = typeof rawModel === "string" ? rawModel.trim() : "";
+  let effort = typeof rawEffort === "string" ? rawEffort.trim().toLowerCase() : "";
+
+  // If already an exact known AGY model slug, return as-is
+  if (KNOWN_AGY_MODELS.has(m)) {
+    return m;
+  }
+
+  // Extract embedded effort if present (e.g. model-medium)
+  const effortMatch = m.match(/-(low|medium|high)$/i);
+  if (effortMatch) {
+    if (!effort) effort = effortMatch[1].toLowerCase();
+    m = m.slice(0, effortMatch.index);
+  }
+
+  // Default effort to medium if not low/high
+  if (effort !== "low" && effort !== "high") {
+    effort = "medium";
+  }
+
+  // Map Opus
+  if (/opus/i.test(m)) {
+    return `claude-opus-5-5-${effort}`;
+  }
+
+  // Map Sonnet or Claude (including legacy "sonnet", "claude-sonnet-4-6", etc.)
+  if (/sonnet|claude/i.test(m)) {
+    return `claude-sonnet-5-5-${effort}`;
+  }
+
+  // Map Gemini Pro (pro only has low and high in AGY)
+  if (/pro/i.test(m)) {
+    return effort === "low" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high";
+  }
+
+  // Default to Gemini Flash with effort
+  return `gemini-3.8-flash-${effort}`;
+}
+
 /**
  * Build CLI arguments for the target agent platform.
  */
@@ -145,31 +211,8 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       sessionId,
       "--dangerously-skip-permissions",
     ];
-    let model = config.model;
-    let effort = config.reasoningEffort || "";
-
-    // Normalize model if from claude (e.g. sonnet/opus/haiku) or empty or legacy gemini-2
-    if (!model || ["sonnet", "opus", "haiku"].includes(model) || /gemini-2/i.test(model)) {
-      if (/pro/i.test(model || "")) {
-        model = effort === "low" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high";
-      } else if (model === "sonnet") {
-        model = "claude-sonnet-5-5-medium";
-      } else if (model === "opus") {
-        model = "claude-opus-5-5-medium";
-      } else {
-        model = effort === "low" ? "gemini-3.8-flash-low" : effort === "medium" ? "gemini-3.8-flash-medium" : "gemini-3.8-flash-high";
-      }
-      effort = "";
-    } else if (model && /-(low|medium|high)$/i.test(model)) {
-      effort = "";
-    }
-
-    if (model) {
-      args.push("--model", model);
-    }
-    if (effort) {
-      args.push("--effort", effort);
-    }
+    const normalizedModel = normalizeAgyModel(config.model, config.reasoningEffort);
+    args.push("--model", normalizedModel);
     return args;
   }
 

@@ -80,7 +80,7 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     platform: "agy",
     prompt: "Cross model prompt",
     sessionId: "agy-999",
-    config: { model: "sonnet" },
+    config: { model: "sonnet", reasoningEffort: "medium" },
   });
   assert.deepEqual(agyCrossModelArgs, [
     "-p",
@@ -90,6 +90,22 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     "--dangerously-skip-permissions",
     "--model",
     "claude-sonnet-5-5-medium",
+  ]);
+
+  const agyClaudeLegacyArgs = buildAgentCliArgs({
+    platform: "agy",
+    prompt: "Claude legacy prompt",
+    sessionId: "agy-111",
+    config: { model: "claude-sonnet-4-6", reasoningEffort: "high" },
+  });
+  assert.deepEqual(agyClaudeLegacyArgs, [
+    "-p",
+    "Claude legacy prompt",
+    "--conversation",
+    "agy-111",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-sonnet-5-5-high",
   ]);
 
   assert.throws(() => buildAgentCliArgs({ platform: "unknown", prompt: "", sessionId: "" }));
