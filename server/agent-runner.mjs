@@ -988,14 +988,13 @@ export async function chooseSystemDirectory({ initialPath = "", prompt = "請選
   const initialExists = Boolean(normInitial && existsSync(normInitial));
 
   if (process.platform === "darwin") {
-    let script = `tell application "System Events"\nactivate\n`;
+    let script = "";
     if (initialExists) {
       const safePath = normInitial.replace(/"/g, '\\"');
-      script += `set chosenFolder to choose folder with prompt "${prompt.replace(/"/g, '\\"')}" default location (POSIX file "${safePath}")\n`;
+      script = `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}" default location (POSIX file "${safePath}"))`;
     } else {
-      script += `set chosenFolder to choose folder with prompt "${prompt.replace(/"/g, '\\"')}"\n`;
+      script = `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}")`;
     }
-    script += `POSIX path of chosenFolder\nend tell`;
 
     try {
       const { stdout } = await execFileAsync("osascript", ["-e", script]);
@@ -1009,7 +1008,8 @@ export async function chooseSystemDirectory({ initialPath = "", prompt = "請選
       if (message.includes("-128") || message.includes("User cancelled")) {
         return { canceled: true, path: null };
       }
-      throw err;
+      console.error("[AgentRunner] chooseSystemDirectory error:", err);
+      return { canceled: true, path: null, error: message };
     }
   } else if (process.platform === "win32") {
     const psScript = `
@@ -1033,7 +1033,8 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
       }
       return { canceled: false, path: chosen };
     } catch (err) {
-      throw err;
+      console.error("[AgentRunner] Windows chooseSystemDirectory error:", err);
+      return { canceled: true, path: null, error: String(err?.message || err) };
     }
   } else {
     // Linux
@@ -1058,7 +1059,8 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
         return { canceled: false, path: chosen.replace(/\/$/, "") };
       } catch (kErr) {
         if (kErr?.code === 1) return { canceled: true, path: null };
-        throw new Error("No supported dialog tool found (zenity or kdialog required on Linux)");
+        console.error("[AgentRunner] Linux chooseSystemDirectory error:", kErr);
+        return { canceled: true, path: null, error: "No supported dialog tool found (zenity or kdialog required on Linux)" };
       }
     }
   }
