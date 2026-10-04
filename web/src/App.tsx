@@ -2642,6 +2642,27 @@ export function App() {
     };
   }, [companionBase]);
 
+  useEffect(() => {
+    const handleAgentInput = async (event: Event) => {
+      const customEvent = event as CustomEvent<{ taskId: string; input: string }>;
+      const { taskId, input } = customEvent.detail;
+      try {
+        await fetch(`${companionBase}/api/local/agent-runner/input`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-taskboard-client": "web-ui" },
+          body: JSON.stringify({ taskId, input }),
+        });
+        void fetchAgentHealth();
+      } catch (e) {
+        console.error("Failed to send input to agent run", e);
+      }
+    };
+    window.addEventListener("agent-runner-input", handleAgentInput);
+    return () => {
+      window.removeEventListener("agent-runner-input", handleAgentInput);
+    };
+  }, [companionBase, fetchAgentHealth]);
+
   const [pickingDirectory, setPickingDirectory] = useState(false);
 
   const handlePickDirectory = useCallback(async (currentPath?: string): Promise<string | null> => {

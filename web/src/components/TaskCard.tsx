@@ -224,10 +224,15 @@ const AGENT_STALL_MS = 90_000;
 function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresentation["processing"]["agentRun"]> }) {
   const { text } = useTaskboardI18n();
   const [now, setNow] = useState(Date.now);
+  const [expanded, setExpanded] = useState(false);
+  const [customInput, setCustomInput] = useState("");
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
   const reference = agentRun.lastOutputAt ?? agentRun.startedAt ?? null;
   const idleMs = reference ? Math.max(0, now - reference) : 0;
   const idle = elapsedTime(reference ? new Date(reference).toISOString() : null, now);
@@ -238,16 +243,108 @@ function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresen
     : stalled
       ? text(`已 ${idle} 無新輸出，可能卡住`, `No new output for ${idle} — may be stuck`)
       : text(`運作中 · ${idle || "剛剛"} 前有輸出`, `Active · last output ${idle || "just now"} ago`);
+
+  const handleSend = (inputVal: string) => {
+    window.dispatchEvent(
+      new CustomEvent("agent-runner-input", {
+        detail: { taskId: agentRun.taskId, input: inputVal },
+      }),
+    );
+    const displayLabel = inputVal.trim() ? inputVal.trim() : "↵ Enter";
+    setFeedback(text(`已送出: ${displayLabel}`, `Sent: ${displayLabel}`));
+    setCustomInput("");
+    setTimeout(() => setFeedback(null), 2500);
+  };
+
+  const isBoxOpen = expanded || stalled;
+
   return (
     <div className={`task-agent-activity${stalled ? " is-stalled" : ""}`} aria-live="off">
       <div className="task-agent-activity-line is-headline">
         <span className="task-agent-activity-dot" aria-hidden="true" />
         <span className="task-agent-activity-platform">{agentRun.platform}</span>
         <span className="task-agent-activity-text">{headline}</span>
+        <button
+          type="button"
+          className={`task-agent-intervene-toggle${isBoxOpen ? " is-active" : ""}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
+          title={text(isBoxOpen ? "收起終端輸入" : "開啟網頁終端輸入", isBoxOpen ? "Collapse input" : "Interactive terminal input")}
+          aria-label={text("終端互動", "Terminal input")}
+        >
+          {isBoxOpen ? text("收起", "Hide") : text("互動輸入", "Interact")}
+        </button>
       </div>
       {lines.length > 0 && (
         <div className="task-agent-activity-line is-output" title={lines.join("\n")}>
           {lines[lines.length - 1]}
+        </div>
+      )}
+      {isBoxOpen && (
+        <div
+          className="task-agent-interact-panel"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="task-agent-quick-row">
+            <span className="task-agent-quick-hint">{text("快捷回應:", "Quick:")}</span>
+            <button
+              type="button"
+              className="task-agent-quick-btn"
+              onClick={() => handleSend("\n")}
+              title={text("送出 Enter 鍵", "Send Enter")}
+            >
+              ↵ Enter
+            </button>
+            <button
+              type="button"
+              className="task-agent-quick-btn is-yes"
+              onClick={() => handleSend("y\n")}
+              title={text("送出 y (同意 / 繼續)", "Send y (confirm)")}
+            >
+              y ({text("確認", "Yes")})
+            </button>
+            <button
+              type="button"
+              className="task-agent-quick-btn is-no"
+              onClick={() => handleSend("n\n")}
+              title={text("送出 n (拒絕 / 取消)", "Send n (no)")}
+            >
+              n ({text("取消", "No")})
+            </button>
+            {feedback && <span className="task-agent-input-feedback">{feedback}</span>}
+          </div>
+          <form
+            className="task-agent-input-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (customInput.length > 0) {
+                handleSend(customInput);
+              }
+            }}
+          >
+            <input
+              type="text"
+              className="task-agent-input-field"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              placeholder={text("輸入終端指令或自訂回覆 (Enter 送出)…", "Type input for terminal (Enter to send)…")}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+              }}
+            />
+            <button
+              type="submit"
+              className="task-agent-input-submit"
+              disabled={!customInput.trim()}
+              title={text("送出文字至終端", "Send text to terminal")}
+            >
+              {text("送出", "Send")}
+            </button>
+          </form>
         </div>
       )}
     </div>

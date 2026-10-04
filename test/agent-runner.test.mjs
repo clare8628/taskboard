@@ -806,5 +806,66 @@ test("validateAgentModel validates and normalizes models for claude and agy", ()
   });
 });
 
+test("AgentRunner sendInput writes input to child process stdin with trailing newline", async () => {
+  let stdinReceived = "";
+  const mockChild = new EventEmitter();
+  mockChild.pid = 88888;
+  mockChild.stdin = {
+    writable: true,
+    write: (chunk) => {
+      stdinReceived += chunk;
+      return true;
+    },
+  };
+  mockChild.stdout = new EventEmitter();
+  mockChild.stderr = new EventEmitter();
+
+  const runner = new AgentRunner({
+    apiBaseUrl: "http://127.0.0.1:47823",
+    spawnProcess: () => mockChild,
+    fetch: async (url) => {
+      const s = String(url);
+      if (s.endsWith("/api/projects")) {
+        return { ok: true, json: async () => ({ projects: [{ id: "proj-input", workspacePath: "/work/input" }] }) };
+      }
+      if (s.includes("/api/tasks?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tasks: [{ id: "task-input-1", identifier: "INPUT-1", projectId: "proj-input", status: "todo", version: 1 }],
+          }),
+        };
+      }
+      if (s.endsWith("/move")) {
+        return { ok: true, json: async () => ({ task: { id: "task-input-1", version: 2 } }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+    checkAgentAuth: async () => true,
+  });
+
+  const dispatchPromise = runner.dispatchProject("proj-input", {
+    status: "ACTIVE",
+    agentPlatform: "claude",
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+
+  const sent = runner.sendInput("task-input-1", "y");
+  assert.equal(sent, true);
+  assert.equal(stdinReceived, "y\n");
+
+  const sentEnter = runner.sendInput("task-input-1", "\n");
+  assert.equal(sentEnter, true);
+  assert.equal(stdinReceived, "y\n\n");
+
+  const nonExistent = runner.sendInput("non-existent-task", "y");
+  assert.equal(nonExistent, false);
+
+  mockChild.emit("close", 0, null);
+  await dispatchPromise;
+  await runner.close();
+});
+
 
 

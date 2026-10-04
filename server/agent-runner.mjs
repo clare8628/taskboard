@@ -634,17 +634,21 @@ export class AgentRunner {
 
   sendInput(taskId, input) {
     const run = this.activeRuns.get(taskId);
-    if (!run || !run.child || !run.child.stdin) {
+    if (!run || !run.child || !run.child.stdin || !run.child.stdin.writable) {
       return false;
     }
     try {
-      run.child.stdin.write(input);
+      const text = typeof input === "string" ? input : String(input || "");
+      const payload = text.endsWith("\n") ? text : `${text}\n`;
+      run.child.stdin.write(payload);
+      run.lastOutputAt = Date.now();
       return true;
     } catch (e) {
       console.error(`[AgentRunner] Failed to send input to task ${taskId}:`, e);
       return false;
     }
   }
+
 
   abortTask(taskId) {
     const run = this.activeRuns.get(taskId);
