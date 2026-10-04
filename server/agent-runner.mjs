@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -113,6 +113,19 @@ export function detectInteractivePrompt(rawText) {
   return null;
 }
 
+export const KNOWN_CLAUDE_MODELS = new Set([
+  "sonnet",
+  "opus",
+  "haiku",
+  "claude-3-7-sonnet-latest",
+  "claude-3-5-sonnet-latest",
+  "claude-3-5-haiku-latest",
+  "claude-3-opus-latest",
+  "claude-3-sonnet",
+  "claude-3-opus",
+  "claude-3-haiku",
+]);
+
 export const KNOWN_AGY_MODELS = new Set([
   "gemini-3.8-flash-high",
   "gemini-3.8-flash-medium",
@@ -133,6 +146,103 @@ export const KNOWN_AGY_MODELS = new Set([
   "claude-sonnet-5-5-high",
   "gpt-oss-120b-medium",
 ]);
+
+/**
+ * Validate that a model exists in the target agent platform's catalog.
+ * Returns { valid: boolean, model: string, original?: string }.
+ * If the model does not exist or belongs to a different platform,
+ * returns valid: false with a safe, verified fallback model.
+ */
+export function validateAgentModel(platform, rawModel, rawEffort = "") {
+  const m = typeof rawModel === "string" ? rawModel.trim() : "";
+
+  if (platform === "claude") {
+    // Empty model defaults to sonnet
+    if (!m) {
+      return { valid: true, model: "sonnet" };
+    }
+
+    const lower = m.toLowerCase();
+
+    // Direct match for known Claude CLI models or aliases
+    if (KNOWN_CLAUDE_MODELS.has(lower)) {
+      return { valid: true, model: lower };
+    }
+
+    // Explicitly reject models from other providers (e.g. Gemini, GPT, DeepSeek)
+    if (/^(gemini|gpt|o1|o3|o4|deepseek)/i.test(m)) {
+      return { valid: false, model: "sonnet", original: m };
+    }
+
+    // Map common aliases or versioned names
+    if (/opus/i.test(m)) {
+      return { valid: true, model: "opus" };
+    }
+    if (/haiku/i.test(m)) {
+      return { valid: true, model: "haiku" };
+    }
+    if (/sonnet|claude/i.test(m)) {
+      return { valid: true, model: "sonnet" };
+    }
+
+    // Any unrecognized model name is invalid for Claude Code; fallback to sonnet to prevent crash
+    return { valid: false, model: "sonnet", original: m };
+  }
+
+  if (platform === "agy") {
+    if (!m) {
+      return { valid: true, model: "gemini-3.8-flash-medium" };
+    }
+
+    if (KNOWN_AGY_MODELS.has(m)) {
+      return { valid: true, model: m };
+    }
+
+    // Explicitly reject non-AGY models or unmapped names
+    if (/^(gpt-4|gpt-3|o1|o3|o4|deepseek)/i.test(m) || !/gemini|claude|sonnet|opus|flash|pro|gpt-oss/i.test(m)) {
+      return { valid: false, model: "gemini-3.8-flash-medium", original: m };
+    }
+
+    // Try normalization
+    const normalized = normalizeAgyModel(m, rawEffort);
+    if (KNOWN_AGY_MODELS.has(normalized)) {
+      return { valid: true, model: normalized };
+    }
+
+    return { valid: false, model: "gemini-3.8-flash-medium", original: m };
+  }
+
+  return { valid: true, model: m };
+}
+
+/**
+ * Ensure the given workspace is marked as trusted in ~/.claude.json so that
+ * Claude Code runs cleanly without blocking on trust dialogs or ignoring permissions.
+ */
+export function ensureClaudeWorkspaceTrusted(workspacePath) {
+  if (process.platform === "win32") return;
+  const home = process.env.HOME || os.homedir();
+  const configPath = path.join(home, ".claude.json");
+  try {
+    if (!existsSync(configPath)) return;
+    const content = readFileSync(configPath, "utf-8");
+    const json = JSON.parse(content);
+    if (!json.projects) json.projects = {};
+    const norm = path.resolve(workspacePath);
+    if (!json.projects[norm]) {
+      json.projects[norm] = {
+        allowedTools: [],
+        hasTrustDialogAccepted: true,
+      };
+      writeFileSync(configPath, JSON.stringify(json, null, 2), "utf-8");
+    } else if (!json.projects[norm].hasTrustDialogAccepted) {
+      json.projects[norm].hasTrustDialogAccepted = true;
+      writeFileSync(configPath, JSON.stringify(json, null, 2), "utf-8");
+    }
+  } catch (err) {
+    console.debug("[AgentRunner] Could not update ~/.claude.json trust:", err);
+  }
+}
 
 /**
  * Normalize model identifier for Google Antigravity (AGY) CLI.
@@ -191,15 +301,8 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       sessionId,
       "--dangerously-skip-permissions",
     ];
-    let model = config.model || "sonnet";
-    if (/^claude-3/i.test(model)) {
-      if (/opus/i.test(model)) model = "opus";
-      else if (/haiku/i.test(model)) model = "haiku";
-      else model = "sonnet";
-    } else if (/gemini|gpt/i.test(model) || !model) {
-      model = "sonnet";
-    }
-    args.push("--model", model);
+    const validation = validateAgentModel("claude", config.model, config.reasoningEffort);
+    args.push("--model", validation.model);
     return args;
   }
 
@@ -211,8 +314,8 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
       sessionId,
       "--dangerously-skip-permissions",
     ];
-    const normalizedModel = normalizeAgyModel(config.model, config.reasoningEffort);
-    args.push("--model", normalizedModel);
+    const validation = validateAgentModel("agy", config.model, config.reasoningEffort);
+    args.push("--model", validation.model);
     return args;
   }
 
@@ -731,8 +834,26 @@ export class AgentRunner {
       platform,
       platform === "claude" ? this.claudeExecutable : this.agyExecutable,
     );
+
+    // Ensure Claude workspace trust dialog is accepted in ~/.claude.json
+    if (platform === "claude" && targetWorkspace) {
+      ensureClaudeWorkspaceTrusted(targetWorkspace);
+    }
+
+    // Pre-flight validation: ensure model exists in the target platform catalog
+    const modelValidation = validateAgentModel(platform, config?.model, config?.reasoningEffort);
+    if (!modelValidation.valid) {
+      console.warn(
+        `[AgentRunner] Model '${modelValidation.original}' is not supported on platform '${platform}'. Safe fallback applied: '${modelValidation.model}'`
+      );
+    }
+    const safeConfig = {
+      ...(config || {}),
+      model: modelValidation.model,
+    };
+
     const prompt = buildAgentTaskPrompt({ project, task, workspacePath: targetWorkspace });
-    const args = buildAgentCliArgs({ platform, prompt, sessionId, config });
+    const args = buildAgentCliArgs({ platform, prompt, sessionId, config: safeConfig });
 
     const runState = {
       child: null,

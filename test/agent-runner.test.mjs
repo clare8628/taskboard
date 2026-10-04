@@ -12,6 +12,7 @@ import {
   normalizeWorkspacePath,
   resolveAgentExecutable,
   stripAnsi,
+  validateAgentModel,
 } from "../server/agent-runner.mjs";
 
 test("resolveAgentExecutable returns explicit path or env override", () => {
@@ -42,7 +43,24 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     "sess-123",
     "--dangerously-skip-permissions",
     "--model",
-    "claude-sonnet-4-6",
+    "sonnet",
+  ]);
+
+  // Cross-model protection: passing a Gemini model to Claude Code automatically falls back to sonnet
+  const claudeCrossModelArgs = buildAgentCliArgs({
+    platform: "claude",
+    prompt: "Cross model prompt",
+    sessionId: "sess-cross",
+    config: { model: "gemini-3.8-flash-high" },
+  });
+  assert.deepEqual(claudeCrossModelArgs, [
+    "-p",
+    "Cross model prompt",
+    "--session-id",
+    "sess-cross",
+    "--dangerously-skip-permissions",
+    "--model",
+    "sonnet",
   ]);
 
   const agyArgs = buildAgentCliArgs({
@@ -324,7 +342,7 @@ test("AgentRunner full cycle: claim, spawn claude CLI, post summary, move to in_
   assert.equal(spawnedArgs?.args[0], "-p");
   assert.equal(spawnedArgs?.args[2], "--session-id");
   assert.equal(spawnedArgs?.args[5], "--model");
-  assert.equal(spawnedArgs?.args[6], "claude-sonnet-4-6");
+  assert.equal(spawnedArgs?.args[6], "sonnet");
 
   // Verify API claim
   const claimCall = apiCalls.find((c) => c.url.includes("/tasks/task-101/move") && c.body?.status === "in_progress");
@@ -746,6 +764,46 @@ test("AgentRunner abortTask terminates child process and tracks lastLine", async
 
 test("chooseSystemDirectory is an exported async function", () => {
   assert.equal(typeof chooseSystemDirectory, "function");
+});
+
+test("validateAgentModel validates and normalizes models for claude and agy", () => {
+  // Claude valid models
+  assert.deepEqual(validateAgentModel("claude", "sonnet"), { valid: true, model: "sonnet" });
+  assert.deepEqual(validateAgentModel("claude", "opus"), { valid: true, model: "opus" });
+  assert.deepEqual(validateAgentModel("claude", "haiku"), { valid: true, model: "haiku" });
+  assert.deepEqual(validateAgentModel("claude", "claude-3-7-sonnet-latest"), { valid: true, model: "claude-3-7-sonnet-latest" });
+  assert.deepEqual(validateAgentModel("claude", "claude-sonnet-4-6"), { valid: true, model: "sonnet" });
+  assert.deepEqual(validateAgentModel("claude", ""), { valid: true, model: "sonnet" });
+
+  // Claude invalid / cross-provider models fallback to sonnet
+  assert.deepEqual(validateAgentModel("claude", "gemini-3.8-flash-high"), {
+    valid: false,
+    model: "sonnet",
+    original: "gemini-3.8-flash-high",
+  });
+  assert.deepEqual(validateAgentModel("claude", "gpt-4o"), {
+    valid: false,
+    model: "sonnet",
+    original: "gpt-4o",
+  });
+  assert.deepEqual(validateAgentModel("claude", "unknown-random-model"), {
+    valid: false,
+    model: "sonnet",
+    original: "unknown-random-model",
+  });
+
+  // AGY valid models
+  assert.deepEqual(validateAgentModel("agy", "gemini-3.8-flash-high"), { valid: true, model: "gemini-3.8-flash-high" });
+  assert.deepEqual(validateAgentModel("agy", "gemini-3.8-flash-medium"), { valid: true, model: "gemini-3.8-flash-medium" });
+  assert.deepEqual(validateAgentModel("agy", "claude-sonnet-5-5-medium"), { valid: true, model: "claude-sonnet-5-5-medium" });
+  assert.deepEqual(validateAgentModel("agy", "sonnet", "medium"), { valid: true, model: "claude-sonnet-5-5-medium" });
+
+  // AGY invalid models fallback to gemini-3.8-flash-medium
+  assert.deepEqual(validateAgentModel("agy", "totally-unknown-model-xyz"), {
+    valid: false,
+    model: "gemini-3.8-flash-medium",
+    original: "totally-unknown-model-xyz",
+  });
 });
 
 
