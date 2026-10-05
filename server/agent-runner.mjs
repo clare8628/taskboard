@@ -325,7 +325,7 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
 /**
  * Build the execution prompt given to the AI Agent CLI.
  */
-export function buildAgentTaskPrompt({ project, task, workspacePath }) {
+export function buildAgentTaskPrompt({ project, task, workspacePath, comments = [] }) {
   const parts = [
     `# Taskboard 任務指派：[${task.identifier || task.id}] ${task.title}`,
     "",
@@ -337,14 +337,32 @@ export function buildAgentTaskPrompt({ project, task, workspacePath }) {
     `- 優先級: ${task.priority || "none"}`,
     `- 標籤: ${(task.labels || []).join(", ") || "無"}`,
     `- 工作目錄: ${workspacePath}`,
+  ];
+
+  if (Array.isArray(comments) && comments.length > 0) {
+    parts.push("", "## 議題討論紀錄與追加指示 (Discussion & Comments)");
+    parts.push("此任務先前有以下歷史執行回報與使用者討論紀錄：");
+    for (const comment of comments) {
+      const author = comment.authorName || comment.author?.name || (comment.authorType === "agent" ? "Agent" : "使用者");
+      const time = comment.createdAt ? new Date(comment.createdAt).toISOString() : "";
+      const body = (comment.body || "").trim();
+      if (body) {
+        parts.push(`\n### 💬 [${author}${time ? ` · ${time}` : ""}]：`);
+        parts.push(body);
+      }
+    }
+  }
+
+  parts.push(
     "",
     "## 執行指令與規範",
     "1. 你正在以無人值守（Headless）模式自主執行此看板任務。",
-    "2. 請先檢視工作區內的程式碼結構、相關檔案與現有規範，並完成所有必要的修改與實作。",
-    "3. 若專案包含測試、型別檢查或代碼驗證工具，請務必在完成前執行並確認通過。",
-    "4. 不需要詢問使用者確認，請直接自主完成必要操作。",
-    "5. 執行完成後，請於最終輸出中清楚整理：「改動檔案清單」、「主要實作內容」、「驗證結果」以及「任何後續注意事項」。",
-  ];
+    "2. 請先檢視工作區內的檔案結構與相關內容，並落實執行任務描述與討論紀錄中的所有要求。",
+    "3. 【最高優先級】若上方「議題討論紀錄與追加指示」中包含使用者最新提出的要求、反饋或修改指示，請務必將其視為最新指引並切實落實（例如：將特定內容寫入指定檔案如 docx/md、調整成果等）。",
+    "4. 不需要詢問使用者確認，請直接自主完成檔案修改、代碼編寫或文件更新等操作。",
+    "5. 若專案包含測試、型別檢查或代碼驗證工具，請務必在完成前執行並確認通過。",
+    "6. 執行完成後，請於最終輸出中清楚整理：「改動檔案清單」、「主要實作內容」、「驗證結果」以及「任何後續注意事項」。"
+  );
 
   return parts.join("\n");
 }
@@ -900,7 +918,24 @@ export class AgentRunner {
       model: modelValidation.model,
     };
 
-    const prompt = buildAgentTaskPrompt({ project, task, workspacePath: targetWorkspace });
+    // Fetch task comments to provide conversation history and follow-up requests
+    let comments = [];
+    try {
+      const commentsRes = await this.fetch(
+        `${apiBaseUrl}/api/tasks/${encodeURIComponent(task.id)}/comments`,
+        {
+          headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+        },
+      );
+      if (commentsRes.ok) {
+        const commentsPayload = await commentsRes.json().catch(() => ({}));
+        comments = commentsPayload.comments || [];
+      }
+    } catch (err) {
+      console.warn(`[AgentRunner] Could not fetch comments for task ${task.id}:`, err);
+    }
+
+    const prompt = buildAgentTaskPrompt({ project, task, workspacePath: targetWorkspace, comments });
     const args = buildAgentCliArgs({ platform, prompt, sessionId, config: safeConfig });
 
     const runState = {

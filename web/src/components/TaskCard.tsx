@@ -690,26 +690,44 @@ export function TaskCard({
           <span className="task-identifier">ID: {displayIdentifier}</span>
         </span>
         {presentation.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
-        {task.status === "in_review" && onComplete && (
-          <button
-            className="task-card-complete"
-            type="button"
-            aria-label={text(`完成 ${displayIdentifier}`, `Complete ${displayIdentifier}`)}
-            title={text("完成", "Complete")}
-            onClick={(event) => {
-              event.stopPropagation();
-              const card = event.currentTarget.closest<HTMLElement>(".task-card")!;
-              card.style.viewTransitionName = "completing-task";
-              const transition = document.startViewTransition(() => onComplete(task));
-              void transition.finished.then(
-                () => { card.style.viewTransitionName = `review-task-${task.id}`; },
-                () => { card.style.viewTransitionName = `review-task-${task.id}`; },
-              );
-            }}
-          >
-            <img src={completeIcon} alt="" aria-hidden="true" />
-            <span>{text("完成", "Complete")}</span>
-          </button>
+        {task.status === "in_review" && (
+          <div className="task-card-review-actions">
+            <button
+              className="task-card-rerun-agent"
+              type="button"
+              aria-label={text(`交由 Agent 重新執行 ${displayIdentifier}`, `Re-run ${displayIdentifier} with Agent`)}
+              title={text("交由 Agent 重新執行（轉為待辦並讀取最新討論與留言）", "Re-run with Agent (set to Todo and parse latest comments)")}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onUpdate(task, { status: "todo" });
+                window.dispatchEvent(new CustomEvent("agent-runner-dispatch"));
+              }}
+            >
+              <span aria-hidden="true">🤖</span>
+              <span>{text("重跑", "Re-run")}</span>
+            </button>
+            {onComplete && (
+              <button
+                className="task-card-complete"
+                type="button"
+                aria-label={text(`完成 ${displayIdentifier}`, `Complete ${displayIdentifier}`)}
+                title={text("完成", "Complete")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const card = event.currentTarget.closest<HTMLElement>(".task-card")!;
+                  card.style.viewTransitionName = "completing-task";
+                  const transition = document.startViewTransition(() => onComplete(task));
+                  void transition.finished.then(
+                    () => { card.style.viewTransitionName = `review-task-${task.id}`; },
+                    () => { card.style.viewTransitionName = `review-task-${task.id}`; },
+                  );
+                }}
+              >
+                <img src={completeIcon} alt="" aria-hidden="true" />
+                <span>{text("完成", "Complete")}</span>
+              </button>
+            )}
+          </div>
         )}
         {variant === "sidebar" && (
           <span className="sidebar-card-creator">

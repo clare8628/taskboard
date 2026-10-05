@@ -161,6 +161,39 @@ test("buildAgentTaskPrompt includes task identifier, title, description, and wor
   assert.match(prompt, /工作目錄: \/work\/my-project/);
 });
 
+test("buildAgentTaskPrompt formats task comments with follow-up priority instructions", () => {
+  const prompt = buildAgentTaskPrompt({
+    project: { name: "116-1-2教學實踐計劃" },
+    task: {
+      id: "task-116",
+      identifier: "TASK-116",
+      title: "釋疑或調整",
+      description: "請檢視審查意見並研擬對策。",
+    },
+    workspacePath: "/work/plan-116",
+    comments: [
+      {
+        authorName: "Claude Code",
+        authorType: "agent",
+        body: "### 🤖 建議附件一二三的具體規劃內容...",
+        createdAt: "2026-10-05T12:00:00Z",
+      },
+      {
+        authorName: "林老師",
+        authorType: "user",
+        body: "請將這些附件內容直接寫入「教學實踐計劃書(116草稿).docx」檔中。",
+        createdAt: "2026-10-05T13:00:00Z",
+      },
+    ],
+  });
+
+  assert.match(prompt, /議題討論紀錄與追加指示/);
+  assert.match(prompt, /建議附件一二三的具體規劃內容/);
+  assert.match(prompt, /林老師/);
+  assert.match(prompt, /請將這些附件內容直接寫入「教學實踐計劃書\(116草稿\)\.docx」檔中/);
+  assert.match(prompt, /最高優先級/);
+});
+
 test("evaluateTaskEligibility handles task status, blockers, and agent labels", () => {
   const baseTask = {
     id: "task-1",
@@ -351,7 +384,7 @@ test("AgentRunner full cycle: claim, spawn claude CLI, post summary, move to in_
   assert.ok(claimCall.body.agentSession.sessionId);
 
   // Verify comment added
-  const commentCall = apiCalls.find((c) => c.url.includes("/tasks/task-101/comments"));
+  const commentCall = apiCalls.find((c) => c.method === "POST" && c.url.includes("/tasks/task-101/comments"));
   assert.ok(commentCall, "Comment should be added");
   assert.match(commentCall.body.body, /Claude Code 執行完成報告/);
   assert.match(commentCall.body.body, /All tests passed/);
@@ -448,7 +481,7 @@ test("AgentRunner handles failure: posts error comment and moves task to blocked
   await runner.checkAndDispatch();
 
   // Verify comment with failure
-  const commentCall = apiCalls.find((c) => c.url.includes("/tasks/task-202/comments"));
+  const commentCall = apiCalls.find((c) => c.method === "POST" && c.url.includes("/tasks/task-202/comments"));
   assert.ok(commentCall, "Comment should be added");
   assert.match(commentCall.body.body, /Google Antigravity \(AGY\) 執行失敗/);
   assert.match(commentCall.body.body, /Syntax error in build.ts/);
@@ -719,7 +752,9 @@ test("AgentRunner auto-responds to interactive prompts when autoApprovePrompts i
         return { ok: true, json: async () => ({ task: { id: "task-auto-1", version: 2 } }) };
       }
       if (s.includes("/comments")) {
-        commentsPosted.push(JSON.parse(init.body || "{}"));
+        if (init.method === "POST") {
+          commentsPosted.push(JSON.parse(init.body || "{}"));
+        }
         return { ok: true, json: async () => ({}) };
       }
       return { ok: true, json: async () => ({}) };

@@ -2663,6 +2663,24 @@ export function App() {
     };
   }, [companionBase, fetchAgentHealth]);
 
+  useEffect(() => {
+    const handleAgentDispatch = async () => {
+      try {
+        await fetch(`${companionBase}/api/local/agent-runner/dispatch`, {
+          method: "POST",
+          headers: { "x-taskboard-client": "web-ui" },
+        });
+        void fetchAgentHealth();
+      } catch (e) {
+        // Best effort
+      }
+    };
+    window.addEventListener("agent-runner-dispatch", handleAgentDispatch);
+    return () => {
+      window.removeEventListener("agent-runner-dispatch", handleAgentDispatch);
+    };
+  }, [companionBase, fetchAgentHealth]);
+
   const [pickingDirectory, setPickingDirectory] = useState(false);
 
   const handlePickDirectory = useCallback(async (currentPath?: string): Promise<string | null> => {

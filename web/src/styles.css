@@ -3893,6 +3893,23 @@ kbd {
   transform: translateX(12px);
 }
 
+.comment-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comment-agent-run-button {
+  background: var(--accent-soft, rgba(49, 124, 255, 0.12));
+  color: var(--accent, #317cff);
+  border-color: color-mix(in srgb, var(--accent, #317cff) 30%, transparent);
+}
+
+.comment-agent-run-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #317cff) 20%, transparent);
+  border-color: var(--accent, #317cff);
+}
+
 .issue-properties {
   position: sticky;
   top: 32px;
@@ -3906,6 +3923,7 @@ kbd {
 }
 
 .detail-open-thread-action,
+.detail-reassign-agent-action,
 .detail-copy-action {
   display: flex;
   align-items: center;
@@ -3921,6 +3939,23 @@ kbd {
   font-size: 11px;
   font-weight: 560;
   text-align: left;
+  cursor: pointer;
+}
+
+.detail-reassign-agent-action {
+  grid-column: 1 / -1;
+  background: var(--accent-soft, rgba(49, 124, 255, 0.12));
+  border-color: color-mix(in srgb, var(--accent, #317cff) 30%, transparent);
+  color: var(--accent, #317cff);
+}
+
+.detail-reassign-agent-action:hover {
+  background: color-mix(in srgb, var(--accent, #317cff) 20%, transparent);
+  border-color: var(--accent, #317cff);
+}
+
+.detail-reassign-icon {
+  font-size: 14px;
 }
 
 .detail-open-thread-action {
@@ -8042,14 +8077,47 @@ kbd {
   min-height: 20px;
 }
 
-.task-card-complete {
+.task-card-review-actions {
   display: none;
   align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  pointer-events: auto;
+}
+
+.task-card.status-in_review:hover .task-card-review-actions {
+  display: inline-flex;
+}
+
+.task-card-rerun-agent {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  flex: 0 0 49px;
-  width: 49px;
   height: 20px;
-  margin-left: 16px;
+  padding: 0 7px;
+  gap: 3px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 32px;
+  background: var(--surface-muted, rgba(0, 0, 0, 0.04));
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 15px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.task-card-rerun-agent:hover {
+  background: var(--accent-soft, rgba(49, 124, 255, 0.12));
+  border-color: color-mix(in srgb, var(--accent, #317cff) 40%, transparent);
+  color: var(--accent, #317cff);
+}
+
+.task-card-complete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
   padding: 0 8px;
   gap: 4px;
   border: 0;
@@ -8061,10 +8129,6 @@ kbd {
   line-height: 15px;
   cursor: pointer;
   pointer-events: auto;
-}
-
-.task-card.status-in_review:hover .task-card-complete {
-  display: inline-flex;
 }
 
 .task-card-complete img {

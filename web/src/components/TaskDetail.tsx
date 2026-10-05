@@ -871,7 +871,7 @@ export function TaskDetail({
     }
   }
 
-  async function submitComment() {
+  async function submitComment(forceTodo = false) {
     const body = draft.trim();
     if ((!body && commentInlineImages.length === 0 && commentInlineFiles.length === 0) || submitting) return;
     setSubmitting(true);
@@ -908,11 +908,12 @@ export function TaskDetail({
       setCommentSegments(createInlineMediaSegments());
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       let relationAnchor = await getTask(currentTask.id);
-      if (changeStatusToTodo) {
+      if (changeStatusToTodo || forceTodo) {
         const saved = await onUpdate(relationAnchor, { status: "todo" });
         setCurrentTask(saved);
         relationAnchor = saved;
         setChangeStatusToTodo(false);
+        window.dispatchEvent(new CustomEvent("agent-runner-dispatch"));
       }
       const savedWithRelations = await addMentionRelations(relationAnchor, commentSegments);
       setCurrentTask(savedWithRelations);
@@ -1640,7 +1641,7 @@ export function TaskDetail({
                   </div>
                   <div>
                     <div className="comment-status-action">
-                      <span>{text("改变状态为-等待认领", "Change status to Todo")}</span>
+                      <span>{text("送出後交由 Agent 重新處理 (轉為待辦)", "Send to Agent for re-run (Change status to Todo)")}</span>
                       <button
                         type="button"
                         className={`board-setting-switch${changeStatusToTodo ? " is-on" : ""}`}
@@ -1648,21 +1649,39 @@ export function TaskDetail({
                         aria-checked={changeStatusToTodo}
                         disabled={submitting}
                         onClick={() => setChangeStatusToTodo((current) => !current)}
+                        title={text("開啟後送出評論將自動把狀態轉為待辦，並喚醒 Agent 依最新指示重新執行", "Automatically set status to Todo and trigger Agent with new instructions")}
                       >
                         <span aria-hidden="true" />
                       </button>
                     </div>
-                    <button
-                      className="button primary"
-                      type="submit"
-                      disabled={(
-                        !draft.trim()
-                        && commentInlineImages.length === 0
-                        && commentInlineFiles.length === 0
-                      ) || submitting}
-                    >
-                      {submitting ? text("发布中…", "Posting…") : text("评论", "Comment")}
-                    </button>
+                    <div className="comment-actions-group">
+                      {currentTask.status !== "todo" && currentTask.status !== "in_progress" && (
+                        <button
+                          className="button secondary comment-agent-run-button"
+                          type="button"
+                          disabled={(
+                            !draft.trim()
+                            && commentInlineImages.length === 0
+                            && commentInlineFiles.length === 0
+                          ) || submitting}
+                          onClick={() => void submitComment(true)}
+                          title={text("送出評論並將狀態轉為待辦，喚醒 Agent 讀取最新留言繼續執行", "Submit comment, set status to Todo, and trigger Agent execution")}
+                        >
+                          {text("🤖 留言並交由 Agent 處理", "🤖 Comment & Run Agent")}
+                        </button>
+                      )}
+                      <button
+                        className="button primary"
+                        type="submit"
+                        disabled={(
+                          !draft.trim()
+                          && commentInlineImages.length === 0
+                          && commentInlineFiles.length === 0
+                        ) || submitting}
+                      >
+                        {submitting ? text("发布中…", "Posting…") : text("评论", "Comment")}
+                      </button>
+                    </div>
                   </div>
                 </footer>
               </form>
@@ -1671,6 +1690,21 @@ export function TaskDetail({
 
           <aside className="issue-properties" aria-label={text("议题属性", "Issue properties")}>
             <div className="detail-primary-actions">
+              {currentTask.status !== "todo" && currentTask.status !== "in_progress" && (
+                <button
+                  className="detail-reassign-agent-action"
+                  type="button"
+                  title={text("將任務狀態轉為待辦並喚醒 Agent 重新執行", "Set status to Todo and trigger Agent re-run")}
+                  onClick={async () => {
+                    const saved = await onUpdate(currentTask, { status: "todo" });
+                    setCurrentTask(saved);
+                    window.dispatchEvent(new CustomEvent("agent-runner-dispatch"));
+                  }}
+                >
+                  <span className="detail-reassign-icon" aria-hidden="true">🤖</span>
+                  <span>{text("交由 Agent 重新執行", "Re-run with Agent")}</span>
+                </button>
+              )}
               <button
                 className="detail-open-thread-action"
                 type="button"
