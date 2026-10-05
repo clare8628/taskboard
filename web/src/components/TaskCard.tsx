@@ -256,6 +256,13 @@ function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresen
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const formatConsoleLine = useCallback((line: string): string => {
+    if (/^Warning:\s*no stdin data received/i.test(line.trim())) {
+      return text("Agent 已就緒，正在解析任務與專案上下文…", "Agent ready, parsing task and context…");
+    }
+    return line;
+  }, [text]);
+
   const isBoxOpen = expanded || stalled;
 
   return (
@@ -278,8 +285,8 @@ function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresen
         </button>
       </div>
       {lines.length > 0 && (
-        <div className="task-agent-activity-line is-output" title={lines.join("\n")}>
-          {lines[lines.length - 1]}
+        <div className="task-agent-activity-line is-output" title={lines.map(formatConsoleLine).join("\n")}>
+          {formatConsoleLine(lines[lines.length - 1])}
         </div>
       )}
       {isBoxOpen && (

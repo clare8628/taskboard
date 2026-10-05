@@ -962,26 +962,33 @@ export class AgentRunner {
         });
         runState.child = child;
 
+        const recordOutputChunk = (chunkStr) => {
+          runState.lastOutputAt = Date.now();
+          const rawLines = stripAnsi(chunkStr).trim().split("\n").filter((l) => l.trim().length > 0);
+          if (rawLines.length === 0) return;
+          const mappedLines = rawLines.map((l) => {
+            const trimmed = l.trim();
+            if (/^Warning:\s*no stdin data received/i.test(trimmed)) {
+              return "Agent 已就緒，正在解析任務與專案上下文…";
+            }
+            return trimmed.slice(0, 150);
+          }).filter(Boolean);
+          if (mappedLines.length > 0) {
+            runState.lastLine = mappedLines[mappedLines.length - 1];
+            runState.recentLines = [...(runState.recentLines || []), ...mappedLines].slice(-2);
+          }
+        };
+
         child.stdout?.on("data", (chunk) => {
           const str = chunk.toString("utf8");
           stdout += str;
-          runState.lastOutputAt = Date.now();
-          const lines = stripAnsi(str).trim().split("\n").filter((l) => l.trim().length > 0);
-          if (lines.length > 0) {
-            runState.lastLine = lines[lines.length - 1].slice(0, 150);
-            runState.recentLines = [...(runState.recentLines || []), ...lines.map((l) => l.trim().slice(0, 150))].slice(-2);
-          }
+          recordOutputChunk(str);
           checkAndAutoRespond(str, child);
         });
         child.stderr?.on("data", (chunk) => {
           const str = chunk.toString("utf8");
           stderr += str;
-          runState.lastOutputAt = Date.now();
-          const lines = stripAnsi(str).trim().split("\n").filter((l) => l.trim().length > 0);
-          if (lines.length > 0) {
-            runState.lastLine = lines[lines.length - 1].slice(0, 150);
-            runState.recentLines = [...(runState.recentLines || []), ...lines.map((l) => l.trim().slice(0, 150))].slice(-2);
-          }
+          recordOutputChunk(str);
           checkAndAutoRespond(str, child);
         });
         child.on("error", (err) => {
