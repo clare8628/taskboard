@@ -264,6 +264,13 @@ function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresen
   }, [text]);
 
   const isBoxOpen = expanded || stalled;
+  const terminalEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (isBoxOpen && terminalEndRef.current) {
+      terminalEndRef.current.scrollTop = terminalEndRef.current.scrollHeight;
+    }
+  }, [isBoxOpen, lines]);
 
   return (
     <div className={`task-agent-activity${stalled ? " is-stalled" : ""}`} aria-live="off">
@@ -284,9 +291,13 @@ function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresen
           {isBoxOpen ? text("收起", "Hide") : text("互動輸入", "Interact")}
         </button>
       </div>
-      {lines.length > 0 && (
+      {lines.length > 0 && !isBoxOpen && (
         <div className="task-agent-activity-line is-output" title={lines.map(formatConsoleLine).join("\n")}>
-          {formatConsoleLine(lines[lines.length - 1])}
+          {lines.slice(-2).map((line, idx) => (
+            <div key={idx} className="task-agent-output-preview-row">
+              {formatConsoleLine(line)}
+            </div>
+          ))}
         </div>
       )}
       {isBoxOpen && (
@@ -295,6 +306,22 @@ function AgentActivityLines({ agentRun }: { agentRun: NonNullable<TaskCardPresen
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {lines.length > 0 && (
+            <div className="task-agent-terminal-window">
+              <div className="task-agent-terminal-header">
+                <span className="task-agent-terminal-title">{text("即時終端輸出 (最近日誌)", "Live Terminal Output")}</span>
+                <span className="task-agent-terminal-badge">{lines.length} {text("行", "lines")}</span>
+              </div>
+              <div className="task-agent-terminal-body" ref={terminalEndRef}>
+                {lines.map((l, idx) => (
+                  <div key={idx} className="task-agent-terminal-row">
+                    <span className="task-agent-terminal-chevron">›</span>
+                    <span className="task-agent-terminal-text">{formatConsoleLine(l)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="task-agent-quick-row">
             <span className="task-agent-quick-hint">{text("快捷回應:", "Quick:")}</span>
             <button

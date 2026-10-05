@@ -910,6 +910,7 @@ export class AgentRunner {
       sessionId,
       startedAt: Date.now(),
       lastLine: null,
+      recentLines: [],
       lastOutputAt: null,
     };
 
@@ -971,11 +972,11 @@ export class AgentRunner {
             if (/^Warning:\s*no stdin data received/i.test(trimmed)) {
               return "Agent 已就緒，正在解析任務與專案上下文…";
             }
-            return trimmed.slice(0, 150);
+            return trimmed.slice(0, 300);
           }).filter(Boolean);
           if (mappedLines.length > 0) {
             runState.lastLine = mappedLines[mappedLines.length - 1];
-            runState.recentLines = [...(runState.recentLines || []), ...mappedLines].slice(-2);
+            runState.recentLines = [...(runState.recentLines || []), ...mappedLines].slice(-10);
           }
         };
 
