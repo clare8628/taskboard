@@ -1113,12 +1113,12 @@ export async function chooseSystemDirectory({ initialPath = "", prompt = "請選
   const initialExists = Boolean(normInitial && existsSync(normInitial));
 
   if (process.platform === "darwin") {
-    let script = "";
+    let script = "activate\n";
     if (initialExists) {
       const safePath = normInitial.replace(/"/g, '\\"');
-      script = `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}" default location (POSIX file "${safePath}"))`;
+      script += `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}" default location (POSIX file "${safePath}"))`;
     } else {
-      script = `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}")`;
+      script += `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}")`;
     }
 
     try {
