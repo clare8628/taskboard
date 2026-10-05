@@ -10176,3 +10176,19 @@ kbd {
   .dashboard-metric { border-top: var(--border-hairline) solid var(--border); }
   .dashboard-metric:first-child { border-top: 0; }
 }
+
+.header-build-version {
+  align-self: center;
+  margin-left: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: all;
+}
+
+@media (max-width: 640px) {
+  .header-build-version {
+    display: none;
+  }
+}

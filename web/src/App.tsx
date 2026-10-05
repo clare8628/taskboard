@@ -3992,6 +3992,12 @@ export function App() {
                 </div>
               )}
             </div>
+            <span
+              className="header-build-version"
+              title={text("版本 / 构建时间（台北时间）", "Version / build time (Asia/Taipei)")}
+            >
+              v{__APP_VERSION__}.{__APP_BUILD_TIME__}
+            </span>
           </div>
         </header>
 
