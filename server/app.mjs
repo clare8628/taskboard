@@ -237,7 +237,7 @@ function parseRequestHost(value) {
   return { hostname: url.hostname, httpsOrigin: url.origin };
 }
 
-function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set()) {
+function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set(), isAgentRunner = false) {
   const host = parseRequestHost(request.headers.host);
   const trustedNetworkHost = isTrustedNetworkHost(host.hostname);
   const configuredTrustedHost = !trustedNetworkHost && trustedOrigins.has(host.httpsOrigin);
@@ -247,6 +247,9 @@ function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trusted
 
   const origin = request.headers.origin;
   const configuredTrustedOrigin = trustedOrigins.has(origin);
+  if (isAgentRunner) {
+    return configuredTrustedHost || configuredTrustedOrigin;
+  }
   if (origin && !configuredTrustedOrigin && !TRUSTED_EMBED_ORIGINS.has(origin)) {
     if (!(allowOpaqueOrigin && origin === "null")) {
       let originHost;
@@ -1775,6 +1778,7 @@ export function createTaskboardServer(options = {}) {
         request,
         Boolean(resolved.instanceToken),
         activeTrustedOrigins,
+        isAgentRunnerPath,
       );
       const origin = request.headers.origin;
       let isLoopbackOrigin = false;
@@ -1786,13 +1790,14 @@ export function createTaskboardServer(options = {}) {
       const trustedEmbedOrigin = TRUSTED_EMBED_ORIGINS.has(origin)
         || activeTrustedOrigins.has(origin)
         || isLoopbackOrigin
-        || (Boolean(resolved.instanceToken) && origin === "null");
+        || (Boolean(resolved.instanceToken) && origin === "null")
+        || (isAgentRunnerPath && Boolean(origin));
       if (trustedEmbedOrigin) {
         response.setHeader("access-control-allow-origin", origin);
         response.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
         response.setHeader(
           "access-control-allow-headers",
-          request.headers["access-control-request-headers"] ?? "content-type",
+          request.headers["access-control-request-headers"] ?? "content-type, x-taskboard-client",
         );
         response.setHeader("access-control-expose-headers", "x-codex-taskboard-proof");
         response.setHeader("access-control-allow-private-network", "true");
@@ -1834,7 +1839,7 @@ export function createTaskboardServer(options = {}) {
       }
       if (isLocalAiRoute) {
         assertAiLoopbackRequest(request);
-      } else if (pathname.startsWith("/api/local/")) {
+      } else if (pathname.startsWith("/api/local/") && !isAgentRunnerRoute) {
         assertLoopbackRequest(request);
       }
       const isMachineCapabilityRoute = pathname === "/api/meta"
@@ -3165,6 +3170,12 @@ export function createTaskboardServer(options = {}) {
       if (response.headersSent) {
         response.destroy(error);
         return;
+      }
+      const origin = request.headers.origin;
+      if (origin) {
+        response.setHeader("access-control-allow-origin", origin);
+        response.setHeader("access-control-allow-private-network", "true");
+        response.setHeader("vary", "origin");
       }
       if (error instanceof ApiError) {
         const payload = { error: { code: error.code, message: error.message } };

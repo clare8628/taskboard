@@ -1145,7 +1145,25 @@ export class AgentRunner {
       }
     }
 
-    await Promise.allSettled(runs.map((run) => run.promise));
+    const waitPromise = Promise.allSettled(runs.map((run) => run.promise));
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2500));
+    const finished = await Promise.race([
+      waitPromise.then(() => true),
+      timeoutPromise.then(() => false),
+    ]);
+
+    if (!finished) {
+      for (const run of runs) {
+        if (run.child) {
+          signalProcessTree(run.child, "SIGKILL");
+        }
+      }
+      await Promise.race([
+        Promise.allSettled(runs.map((run) => run.promise)),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+    }
+
     this.activeRuns.clear();
     this.projectRuns.clear();
   }

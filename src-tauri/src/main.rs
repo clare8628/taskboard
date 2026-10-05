@@ -1912,16 +1912,13 @@ fn restart_launcher(
 ) -> Result<LauncherSnapshot, String> {
     let (result, result_generation) = {
         let _lifecycle = state.lifecycle.lock().unwrap();
-        if state.intentional_stop.load(Ordering::SeqCst) {
-            return Ok(state.snapshot.lock().unwrap().clone());
-        }
         if state.update_in_progress.load(Ordering::SeqCst) {
             append_log(state, "Launcher reopen ignored during update installation");
             return Ok(state.snapshot.lock().unwrap().clone());
         }
         stop_managed_child_locked(app, state);
-        let result = start_launcher_locked(app, state);
         state.intentional_stop.store(false, Ordering::SeqCst);
+        let result = start_launcher_locked(app, state);
         let generation = state.generation.load(Ordering::SeqCst);
         (result, generation)
     };
