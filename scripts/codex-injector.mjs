@@ -506,23 +506,30 @@ async function launchCodexWithLaunchServices(appPath, port, shouldStop = () => f
         stdio: "ignore",
       },
     );
-    await new Promise((resolve, reject) => {
-      launcher.once("error", reject);
-      launcher.once("exit", (code, signal) => {
-        if (code === 0) resolve();
-        else reject(new Error(`LaunchServices failed to start Codex (${signal || code})`));
+    try {
+      await new Promise((resolve, reject) => {
+        launcher.once("error", reject);
+        launcher.once("exit", (code, signal) => {
+          if (code === 0) resolve();
+          else reject(new Error(`LaunchServices failed to start Codex (${signal || code})`));
+        });
       });
-    });
+    } catch (launchError) {
+      throw managedCodexSpawnFailure(appPath, ["-a", appPath], launchError);
+    }
   }
 
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
+    if (shouldStop()) throw new Error("Managed Codex launch stopped");
     const launched = managedCodexProcess(appPath);
     if (launched && managedCodexUsesPort(launched, port)) return launched;
     if (launched) throw new Error("The platform launcher started Codex on an unexpected CDP port");
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("The platform launcher did not start the managed Codex process");
+  const timeoutError = new Error("The platform launcher did not start the managed Codex process");
+  timeoutError.managedCodexSpawnFailure = true;
+  throw timeoutError;
 }
 
 async function stopManagedCodex(record) {

@@ -363,7 +363,7 @@ test("AgentRunner full cycle: claim, spawn claude CLI, post summary, move to in_
   await runner.close();
 });
 
-test("AgentRunner handles failure: posts error comment and reverts task to todo", async () => {
+test("AgentRunner handles failure: posts error comment and moves task to blocked", async () => {
   const apiCalls = [];
   let taskVersion = 1;
 
@@ -452,10 +452,12 @@ test("AgentRunner handles failure: posts error comment and reverts task to todo"
   assert.ok(commentCall, "Comment should be added");
   assert.match(commentCall.body.body, /Google Antigravity \(AGY\) 執行失敗/);
   assert.match(commentCall.body.body, /Syntax error in build.ts/);
+  assert.match(commentCall.body.body, /執行主機 \(Host\)/);
+  assert.match(commentCall.body.body, /\/mock\/bin\/agy/);
 
-  // Verify task moved back to todo
-  const revertCall = apiCalls.find((c) => c.url.includes("/tasks/task-202/move") && c.body?.status === "todo");
-  assert.ok(revertCall, "Task should be moved back to todo upon failure");
+  // Verify task moved to blocked so it is not retried every poll
+  const blockCall = apiCalls.find((c) => c.url.includes("/tasks/task-202/move") && c.body?.status === "blocked");
+  assert.ok(blockCall, "Task should be moved to blocked upon failure");
 
   await runner.close();
 });
@@ -583,6 +585,7 @@ test("AgentRunner triggers launchAuth and avoids claiming when agent is unauthen
       return { ok: true, json: async () => ({}) };
     },
     checkAgentAuth: async () => false,
+    pathExists: () => true,
   });
 
   runner.launchAuth = async (platform) => {
@@ -595,6 +598,50 @@ test("AgentRunner triggers launchAuth and avoids claiming when agent is unauthen
   assert.equal(launchAuthCalled, "agy");
   assert.equal(taskClaimed, false);
   assert.equal(runner.status().activeRuns.length, 0);
+
+  await runner.close();
+});
+
+test("AgentRunner blocks task without spawning when workspacePath does not exist", async () => {
+  const apiCalls = [];
+  let spawned = false;
+  const runner = new AgentRunner({
+    readClientStorage: async () => ({
+      "taskboard.projectAutomations.v1": JSON.stringify({
+        "proj-missing": { status: "ACTIVE", agentPlatform: "claude" },
+      }),
+    }),
+    apiBaseUrl: "http://127.0.0.1:47823",
+    fetch: async (url, init = {}) => {
+      const s = String(url);
+      apiCalls.push({ url: s, body: init.body ? JSON.parse(init.body) : null });
+      if (s.endsWith("/api/projects")) {
+        return { ok: true, json: async () => ({ projects: [{ id: "proj-missing", name: "Gamma", workspacePath: "/work/missing" }] }) };
+      }
+      if (s.includes("/api/tasks?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tasks: [{ id: "task-missing", identifier: "MIS-1", projectId: "proj-missing", status: "todo", version: 3, relations: { blockedBy: [] } }],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+    spawnProcess: () => {
+      spawned = true;
+      return new MockChildProcess(0, "", "");
+    },
+    pathExists: () => false,
+  });
+
+  await runner.dispatchProject("proj-missing", { status: "ACTIVE", agentPlatform: "claude" });
+
+  assert.equal(spawned, false);
+  const comment = apiCalls.find((c) => c.url.endsWith("/tasks/task-missing/comments"));
+  assert.match(comment?.body?.body ?? "", /缺少專案工作目錄/);
+  const move = apiCalls.find((c) => c.url.endsWith("/tasks/task-missing/move"));
+  assert.deepEqual(move?.body, { status: "blocked", version: 3 });
 
   await runner.close();
 });

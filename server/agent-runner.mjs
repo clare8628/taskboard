@@ -406,8 +406,14 @@ export class AgentRunner {
     this.agyExecutable = options.agyExecutable ?? null;
     this.processEnv = options.processEnv ?? process.env;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-    this.spawnProcess = options.spawnProcess ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+    this.spawnProcess = options.spawnProcess ?? ((cmd, args, opts) => {
+      if (process.platform === "darwin") {
+        return spawn("/bin/sh", ["-c", 'ulimit -S -n 10240 2>/dev/null; exec "$@"', "--", cmd, ...args], opts);
+      }
+      return spawn(cmd, args, opts);
+    });
     this.isCustomSpawnProcess = Boolean(options.spawnProcess);
+    this.pathExists = options.pathExists ?? (this.isCustomSpawnProcess ? () => true : existsSync);
     this.checkAgentAuthFn = options.checkAgentAuth ?? null;
 
     this.activeRuns = new Map(); // taskId -> { child, promise, platform, sessionId, startedAt }
@@ -732,7 +738,7 @@ export class AgentRunner {
       if (!project) return;
 
       let workspacePath = normalizeWorkspacePath(
-        project.workspacePath || config.workspacePath || process.cwd(),
+        project.workspacePath || config.workspacePath || "",
       );
 
       // 2. Fetch todo tasks
@@ -760,6 +766,44 @@ export class AgentRunner {
       }
 
       if (!targetTask || !targetPlatform) return;
+
+      if (!workspacePath || !this.pathExists(workspacePath)) {
+        console.warn(`[AgentRunner] Project '${project.name}' workspacePath is invalid: "${workspacePath}". Blocking task ${targetTask.id}`);
+        try {
+          await this.fetch(
+            `${apiBaseUrl}/api/tasks/${encodeURIComponent(targetTask.id)}/comments`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                accept: "application/json",
+                "x-taskboard-client": "agent-runner",
+              },
+              body: JSON.stringify({
+                body: `### ⚠️ 無法執行自主任務：缺少專案工作目錄\n\n專案「**${project.name}**」尚未配置有效的本機工作目錄 (Workspace Path: \`${workspacePath || '未指定'}\`)。\n\n請於 Taskboard 專案設定中點選「瀏覽」選取本機目錄，或在 \`cloud-companion.json\` 中加入對應的路徑設定。`,
+              }),
+            },
+          );
+          await this.fetch(
+            `${apiBaseUrl}/api/tasks/${encodeURIComponent(targetTask.id)}/move`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                accept: "application/json",
+                "x-taskboard-client": "agent-runner",
+              },
+              body: JSON.stringify({
+                status: "blocked",
+                version: targetTask.version,
+              }),
+            },
+          );
+        } catch (err) {
+          console.error(`[AgentRunner] Failed to block task with invalid workspace:`, err);
+        }
+        return;
+      }
 
       const isAuth = await this.checkAgentAuth(targetPlatform);
       if (!isAuth) {
@@ -913,7 +957,7 @@ export class AgentRunner {
       try {
         const child = this.spawnProcess(executable, args, {
           cwd: targetWorkspace,
-          env: this.processEnv,
+          env: this.getExecutionEnv(),
           stdio: ["pipe", "pipe", "pipe"],
         });
         runState.child = child;
@@ -1005,6 +1049,9 @@ export class AgentRunner {
         "",
         `- **會話識別碼 (Session ID)**: \`${sessionId}\``,
         `- **終端檢視命令**: \`${resumeCommand}\``,
+        `- **執行主機 (Host)**: \`${os.hostname()}\``,
+        `- **執行檔 (Executable)**: \`${executable}\``,
+        `- **工作目錄 (Workspace)**: \`${targetWorkspace}\``,
         "",
         "**錯誤詳情**:",
         "```",
@@ -1036,8 +1083,8 @@ export class AgentRunner {
       console.error(`[AgentRunner] Failed to post comment on task ${task.id}:`, commentError);
     }
 
-    // 4. Update task status: move to in_review on success, or back to todo on failure
-    const nextStatus = isSuccess ? "in_review" : "todo";
+    // 4. Update task status: move to in_review on success, or to blocked on failure
+    const nextStatus = isSuccess ? "in_review" : "blocked";
     try {
       // Fetch latest task version first to avoid 409
       const latestRes = await this.fetch(
