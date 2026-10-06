@@ -908,7 +908,7 @@ export function TaskDetail({
       setCommentSegments(createInlineMediaSegments());
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       let relationAnchor = await getTask(currentTask.id);
-      if (changeStatusToTodo || forceTodo) {
+      if ((changeStatusToTodo || forceTodo) && relationAnchor.status !== "todo") {
         const saved = await onUpdate(relationAnchor, { status: "todo" });
         setCurrentTask(saved);
         relationAnchor = saved;
@@ -1640,20 +1640,22 @@ export function TaskDetail({
                     />
                   </div>
                   <div>
-                    <div className="comment-status-action">
-                      <span>{text("送出後交由 Agent 重新處理 (轉為待辦)", "Send to Agent for re-run (Change status to Todo)")}</span>
-                      <button
-                        type="button"
-                        className={`board-setting-switch${changeStatusToTodo ? " is-on" : ""}`}
-                        role="switch"
-                        aria-checked={changeStatusToTodo}
-                        disabled={submitting}
-                        onClick={() => setChangeStatusToTodo((current) => !current)}
-                        title={text("開啟後送出評論將自動把狀態轉為待辦，並喚醒 Agent 依最新指示重新執行", "Automatically set status to Todo and trigger Agent with new instructions")}
-                      >
-                        <span aria-hidden="true" />
-                      </button>
-                    </div>
+                    {currentTask.status !== "todo" && (
+                      <div className="comment-status-action">
+                        <span>{text("送出後交由 Agent 重新處理 (轉為待辦)", "Send to Agent for re-run (Change status to Todo)")}</span>
+                        <button
+                          type="button"
+                          className={`board-setting-switch${changeStatusToTodo ? " is-on" : ""}`}
+                          role="switch"
+                          aria-checked={changeStatusToTodo}
+                          disabled={submitting}
+                          onClick={() => setChangeStatusToTodo((current) => !current)}
+                          title={text("開啟後送出評論將自動把狀態轉為待辦，並喚醒 Agent 依最新指示重新執行", "Automatically set status to Todo and trigger Agent with new instructions")}
+                        >
+                          <span aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
                     <div className="comment-actions-group">
                       {currentTask.status !== "todo" && currentTask.status !== "in_progress" && (
                         <button
