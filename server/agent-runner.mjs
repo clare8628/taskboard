@@ -325,9 +325,48 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
 /**
  * Build the execution prompt given to the AI Agent CLI.
  */
+function isAgentReportComment(comment) {
+  if (!comment) return false;
+  if (comment.authorType === "agent") return true;
+  if (comment.agentSession && comment.agentSession.sessionId) return true;
+  return /執行(完成|失敗)報告/.test(String(comment.body || "").split("\n")[0]);
+}
+
+function formatComment(comment) {
+  const author = isAgentReportComment(comment)
+    ? "Agent 執行回報"
+    : comment.authorName || comment.author?.name || "使用者";
+  const time = comment.createdAt ? new Date(comment.createdAt).toISOString() : "";
+  return `\n### 💬 [${author}${time ? ` · ${time}` : ""}]：\n${(comment.body || "").trim()}`;
+}
+
 export function buildAgentTaskPrompt({ project, task, workspacePath, comments = [] }) {
+  const validComments = (Array.isArray(comments) ? comments : [])
+    .filter((comment) => (comment?.body || "").trim());
+  let lastAgentIndex = -1;
+  validComments.forEach((comment, index) => {
+    if (isAgentReportComment(comment)) lastAgentIndex = index;
+  });
+  const history = validComments.slice(0, lastAgentIndex + 1);
+  const pending = validComments.slice(lastAgentIndex + 1);
+  const isFollowUp = lastAgentIndex >= 0 && pending.length > 0;
+
   const parts = [
     `# Taskboard 任務指派：[${task.identifier || task.id}] ${task.title}`,
+  ];
+
+  if (pending.length > 0) {
+    parts.push(
+      "",
+      "## 🔴 本次待處理的最新指示 (Pending Instructions — 最高優先級)",
+      isFollowUp
+        ? "以下是使用者在上一次 Agent 執行回報「之後」新增的指示。原任務先前可能已完成，但這些新指示尚未被處理，本次執行的主要目標就是落實它們。請勿以「任務已完成」為由略過。"
+        : "以下是使用者對此任務的補充指示，請一併落實：",
+    );
+    for (const comment of pending) parts.push(formatComment(comment));
+  }
+
+  parts.push(
     "",
     "## 任務描述 (Task Description)",
     task.description?.trim() || "（無特定詳細描述）",
@@ -337,31 +376,24 @@ export function buildAgentTaskPrompt({ project, task, workspacePath, comments = 
     `- 優先級: ${task.priority || "none"}`,
     `- 標籤: ${(task.labels || []).join(", ") || "無"}`,
     `- 工作目錄: ${workspacePath}`,
-  ];
+  );
 
-  if (Array.isArray(comments) && comments.length > 0) {
-    parts.push("", "## 議題討論紀錄與追加指示 (Discussion & Comments)");
-    parts.push("此任務先前有以下歷史執行回報與使用者討論紀錄：");
-    for (const comment of comments) {
-      const author = comment.authorName || comment.author?.name || (comment.authorType === "agent" ? "Agent" : "使用者");
-      const time = comment.createdAt ? new Date(comment.createdAt).toISOString() : "";
-      const body = (comment.body || "").trim();
-      if (body) {
-        parts.push(`\n### 💬 [${author}${time ? ` · ${time}` : ""}]：`);
-        parts.push(body);
-      }
-    }
+  if (history.length > 0) {
+    parts.push("", "## 歷史討論與執行回報 (History — 僅供參考)");
+    for (const comment of history) parts.push(formatComment(comment));
   }
 
   parts.push(
     "",
     "## 執行指令與規範",
     "1. 你正在以無人值守（Headless）模式自主執行此看板任務。",
-    "2. 請先檢視工作區內的檔案結構與相關內容，並落實執行任務描述與討論紀錄中的所有要求。",
-    "3. 【最高優先級】若上方「議題討論紀錄與追加指示」中包含使用者最新提出的要求、反饋或修改指示，請務必將其視為最新指引並切實落實（例如：將特定內容寫入指定檔案如 docx/md、調整成果等）。",
+    isFollowUp
+      ? "2. 【最高優先級】本次為追加指示執行：請以「本次待處理的最新指示」為主要工作內容，實際修改程式碼/文件來落實，不可僅回報原任務已完成。"
+      : "2. 請先檢視工作區內的檔案結構與相關內容，並落實執行任務描述與討論紀錄中的所有要求。",
+    "3. 若最新指示與任務描述或歷史紀錄衝突，以最新指示為準。",
     "4. 不需要詢問使用者確認，請直接自主完成檔案修改、代碼編寫或文件更新等操作。",
     "5. 若專案包含測試、型別檢查或代碼驗證工具，請務必在完成前執行並確認通過。",
-    "6. 執行完成後，請於最終輸出中清楚整理：「改動檔案清單」、「主要實作內容」、「驗證結果」以及「任何後續注意事項」。"
+    "6. 執行完成後，請於最終輸出中清楚整理：「改動檔案清單」、「主要實作內容」、「如何落實最新指示」、「驗證結果」以及「任何後續注意事項」。"
   );
 
   return parts.join("\n");

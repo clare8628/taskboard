@@ -187,11 +187,27 @@ test("buildAgentTaskPrompt formats task comments with follow-up priority instruc
     ],
   });
 
-  assert.match(prompt, /議題討論紀錄與追加指示/);
+  assert.match(prompt, /本次待處理的最新指示/);
   assert.match(prompt, /建議附件一二三的具體規劃內容/);
   assert.match(prompt, /林老師/);
   assert.match(prompt, /請將這些附件內容直接寫入「教學實踐計劃書\(116草稿\)\.docx」檔中/);
   assert.match(prompt, /最高優先級/);
+  assert.ok(prompt.indexOf("林老師") < prompt.indexOf("## 任務描述"));
+});
+
+test("buildAgentTaskPrompt treats agentSession comments as agent reports even under user name", () => {
+  const prompt = buildAgentTaskPrompt({
+    project: { name: "groupmyclass" },
+    task: { id: "t", identifier: "GRO-17", title: "問卷", description: "實作問卷" },
+    workspacePath: "/w",
+    comments: [
+      { authorName: "clare", authorType: "user", body: "🤖 Claude Code 執行完成報告\n已完成", agentSession: { platform: "claude", sessionId: "s1" } },
+      { authorName: "clare", authorType: "user", body: "學生登入測試時需可選不同問卷" },
+    ],
+  });
+  const pendingSection = prompt.slice(prompt.indexOf("本次待處理的最新指示"), prompt.indexOf("## 任務描述"));
+  assert.match(pendingSection, /需可選不同問卷/);
+  assert.doesNotMatch(pendingSection, /執行完成報告/);
 });
 
 test("evaluateTaskEligibility handles task status, blockers, and agent labels", () => {
