@@ -153,6 +153,60 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   return data.projects;
 }
 
+export interface RetentionSettings {
+  enabled: boolean;
+  retentionDays: number;
+  includeDone: boolean;
+  includeCanceled: boolean;
+  includeArchived: boolean;
+}
+
+export interface RetentionCandidate {
+  id: string;
+  identifier: string;
+  title: string;
+  status: string;
+  archived: boolean;
+  projectName: string | null;
+  updatedAt: string;
+  deleteAt: string;
+  attachmentCount: number;
+  attachmentBytes: number;
+}
+
+export interface RetentionRunResult {
+  trigger: "scheduled" | "manual";
+  startedAt: string;
+  finishedAt: string | null;
+  skipped: boolean;
+  deletedTasks: number;
+  deletedAttachments: number;
+  freedBytes: number;
+  errors: string[];
+}
+
+export interface RetentionOverview {
+  settings: RetentionSettings;
+  limits: { minDays: number; maxDays: number };
+  schedule: string;
+  lastRun: RetentionRunResult | null;
+  totals: { tasks: number; attachments: number; bytes: number; overdue: number };
+  candidates: RetentionCandidate[];
+  result?: RetentionRunResult;
+}
+
+export function getRetentionOverview(signal?: AbortSignal): Promise<RetentionOverview> {
+  return request<RetentionOverview>("/api/retention", { signal });
+}
+
+export function updateRetentionSettings(patch: Partial<RetentionSettings>): Promise<RetentionOverview> {
+  return request<RetentionOverview>("/api/retention", { method: "PUT", body: JSON.stringify(patch) });
+}
+
+export function runRetentionNow(): Promise<RetentionOverview> {
+  return request<RetentionOverview>("/api/retention/run", { method: "POST" });
+}
+
 export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConnection> {
   try {
     const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection", { signal });

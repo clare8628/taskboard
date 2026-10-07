@@ -61,6 +61,7 @@ import {
   DEFAULT_BOARD_DISPLAY_SETTINGS,
   type BoardDisplaySettings,
 } from "./components/BoardCardDisplayMenu";
+import { RetentionSettingsButton } from "./components/RetentionSettingsDialog";
 import { DashboardView } from "./components/DashboardView";
 import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { IssueListView } from "./components/IssueListView";
@@ -4128,6 +4129,7 @@ export function App() {
                 onReset={resetProjectBoardDisplaySettings}
               />
             )}
+            {boardView === "issues" && <RetentionSettingsButton />}
             {boardView === "issues" && otherTasksAvailable && (
               <button
                 className={`other-tasks-trigger${otherTasksOpen ? " is-open" : ""}`}

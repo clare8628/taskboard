@@ -41,5 +41,9 @@
       "tag": "v1-realtime-hub",
       "new_sqlite_classes": ["RealtimeHub"]
     }
-  ]
+  ],
+  "triggers": {
+    // Daily data-retention purge at 03:00 Asia/Taipei (19:00 UTC)
+    "crons": ["0 19 * * *"]
+  }
 }

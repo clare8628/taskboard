@@ -2567,6 +2567,25 @@ async function routeApi(request, env, actor, url) {
     return realtimeHub(env).fetch(new Request("https://realtime.internal/connect", request));
   }
 
+  if (pathname === "/api/retention") {
+    requireNoQuery(url, "/api/retention");
+    if (request.method === "GET") {
+      return json(200, await retentionOverview(env));
+    }
+    if (request.method === "PUT") {
+      await writeRetentionSettings(env, parseRetentionSettings(await readJson(request)));
+      return json(200, await retentionOverview(env));
+    }
+    methodNotAllowed(["GET", "PUT"]);
+  }
+
+  if (pathname === "/api/retention/run") {
+    requireNoQuery(url, "/api/retention/run");
+    if (request.method !== "POST") methodNotAllowed(["POST"]);
+    const result = await runRetentionPurge(env, { trigger: "manual" });
+    return json(200, { result, ...(await retentionOverview(env)) });
+  }
+
   if (pathname === "/api/projects") {
     if (request.method === "GET") {
       requireNoQuery(url, "GET /api/projects");
@@ -2867,7 +2886,224 @@ function withSecurityHeaders(response) {
   return secured;
 }
 
+// ---------------------------------------------------------------------------
+// Data retention: periodically purge old finished cards and their R2 objects.
+// ---------------------------------------------------------------------------
+
+const RETENTION_SETTINGS_KEY = "retention.settings";
+const RETENTION_LAST_RUN_KEY = "retention.lastRun";
+const RETENTION_MIN_DAYS = 7;
+const RETENTION_MAX_DAYS = 3650;
+const RETENTION_BATCH_SIZE = 50;
+const RETENTION_MAX_BATCHES = 20;
+const RETENTION_PREVIEW_LIMIT = 300;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const DEFAULT_RETENTION_SETTINGS = Object.freeze({
+  enabled: true,
+  retentionDays: 90,
+  includeDone: true,
+  includeCanceled: true,
+  includeArchived: true,
+});
+
+export function parseRetentionSettings(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new ApiError(400, "INVALID_BODY", "Request body must be a JSON object");
+  }
+  const allowed = new Set(Object.keys(DEFAULT_RETENTION_SETTINGS));
+  for (const key of Object.keys(payload)) {
+    if (!allowed.has(key)) {
+      throw new ApiError(400, "UNKNOWN_FIELD", `Unknown retention field: ${key}`);
+    }
+  }
+  const next = {};
+  for (const key of ["enabled", "includeDone", "includeCanceled", "includeArchived"]) {
+    if (payload[key] === undefined) continue;
+    if (typeof payload[key] !== "boolean") {
+      throw new ApiError(400, "INVALID_FIELD", `'${key}' must be a boolean`);
+    }
+    next[key] = payload[key];
+  }
+  if (payload.retentionDays !== undefined) {
+    const days = payload.retentionDays;
+    if (!Number.isInteger(days) || days < RETENTION_MIN_DAYS || days > RETENTION_MAX_DAYS) {
+      throw new ApiError(
+        400,
+        "INVALID_FIELD",
+        `'retentionDays' must be an integer between ${RETENTION_MIN_DAYS} and ${RETENTION_MAX_DAYS}`,
+      );
+    }
+    next.retentionDays = days;
+  }
+  return next;
+}
+
+async function readAppSetting(env, key) {
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
+}
+
+async function writeAppSetting(env, key, value) {
+  await env.DB.prepare(`
+    INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).bind(key, JSON.stringify(value), now()).run();
+}
+
+async function readRetentionSettings(env) {
+  const stored = await readAppSetting(env, RETENTION_SETTINGS_KEY);
+  return { ...DEFAULT_RETENTION_SETTINGS, ...(stored && typeof stored === "object" ? stored : {}) };
+}
+
+async function writeRetentionSettings(env, patch) {
+  const current = await readRetentionSettings(env);
+  await writeAppSetting(env, RETENTION_SETTINGS_KEY, { ...current, ...patch });
+}
+
+/** SQL condition (on alias t) selecting cards covered by the retention policy. */
+export function retentionScopeSql(settings, alias = "t") {
+  const clauses = [];
+  if (settings.includeDone) clauses.push(`${alias}.status = 'done'`);
+  if (settings.includeCanceled) clauses.push(`${alias}.status = 'canceled'`);
+  if (settings.includeArchived) clauses.push(`${alias}.archived_at IS NOT NULL`);
+  return clauses.length ? `(${clauses.join(" OR ")})` : null;
+}
+
+function retentionCutoff(settings, at = Date.now()) {
+  return new Date(at - settings.retentionDays * DAY_MS).toISOString();
+}
+
+async function retentionOverview(env) {
+  const settings = await readRetentionSettings(env);
+  const lastRun = await readAppSetting(env, RETENTION_LAST_RUN_KEY);
+  const scope = retentionScopeSql(settings);
+  let candidates = [];
+  let totals = { tasks: 0, attachments: 0, bytes: 0, overdue: 0 };
+  if (scope) {
+    const rows = await all(env.DB.prepare(`
+      SELECT t.id, t.identifier, t.title, t.status, t.archived_at, t.updated_at,
+        p.name AS project_name,
+        (SELECT COUNT(*) FROM attachments a WHERE a.task_id = t.id) AS attachment_count,
+        (SELECT COALESCE(SUM(a.size), 0) FROM attachments a WHERE a.task_id = t.id) AS attachment_bytes
+      FROM tasks t
+      LEFT JOIN projects p ON p.id = t.project_id
+      WHERE ${scope}
+      ORDER BY t.updated_at ASC, t.id ASC
+    `));
+    const cutoff = retentionCutoff(settings);
+    for (const row of rows) {
+      totals.tasks += 1;
+      totals.attachments += Number(row.attachment_count) || 0;
+      totals.bytes += Number(row.attachment_bytes) || 0;
+      if (row.updated_at < cutoff) totals.overdue += 1;
+    }
+    candidates = rows.slice(0, RETENTION_PREVIEW_LIMIT).map((row) => ({
+      id: row.id,
+      identifier: row.identifier,
+      title: row.title,
+      status: row.status,
+      archived: row.archived_at !== null,
+      projectName: row.project_name,
+      updatedAt: row.updated_at,
+      deleteAt: new Date(Date.parse(row.updated_at) + settings.retentionDays * DAY_MS).toISOString(),
+      attachmentCount: Number(row.attachment_count) || 0,
+      attachmentBytes: Number(row.attachment_bytes) || 0,
+    }));
+  }
+  return {
+    settings,
+    limits: { minDays: RETENTION_MIN_DAYS, maxDays: RETENTION_MAX_DAYS },
+    schedule: "每日 03:00（台北時間）",
+    lastRun,
+    totals,
+    candidates,
+  };
+}
+
+export async function runRetentionPurge(env, { trigger = "scheduled", at = Date.now() } = {}) {
+  const settings = await readRetentionSettings(env);
+  const result = {
+    trigger,
+    startedAt: new Date(at).toISOString(),
+    finishedAt: null,
+    skipped: false,
+    deletedTasks: 0,
+    deletedAttachments: 0,
+    freedBytes: 0,
+    errors: [],
+  };
+  const scope = retentionScopeSql(settings);
+  if ((!settings.enabled && trigger === "scheduled") || !scope) {
+    result.skipped = true;
+  } else {
+    const cutoff = retentionCutoff(settings, at);
+    for (let batch = 0; batch < RETENTION_MAX_BATCHES; batch += 1) {
+      const rows = await all(env.DB.prepare(`
+        SELECT t.id FROM tasks t
+        WHERE ${scope} AND t.updated_at < ?
+        ORDER BY t.updated_at ASC
+        LIMIT ?
+      `).bind(cutoff, RETENTION_BATCH_SIZE));
+      if (rows.length === 0) break;
+      const ids = rows.map((row) => row.id);
+      const placeholders = ids.map(() => "?").join(", ");
+      const attachments = await all(env.DB.prepare(`
+        SELECT id, size FROM attachments WHERE task_id IN (${placeholders})
+      `).bind(...ids));
+      // Re-check scope/cutoff inside DELETE so cards edited meanwhile survive.
+      const deletion = await env.DB.prepare(`
+        DELETE FROM tasks
+        WHERE tasks.id IN (${placeholders}) AND ${retentionScopeSql(settings, "tasks")} AND tasks.updated_at < ?
+      `).bind(...ids, cutoff).run();
+      result.deletedTasks += deletion.meta?.changes ?? 0;
+      // Only remove R2 objects whose rows were actually cascaded away.
+      const stillPresent = new Set();
+      for (let i = 0; i < attachments.length; i += 90) {
+        const chunk = attachments.slice(i, i + 90).map((a) => a.id);
+        const present = await all(env.DB.prepare(`
+          SELECT id FROM attachments WHERE id IN (${chunk.map(() => "?").join(", ")})
+        `).bind(...chunk));
+        for (const row of present) stillPresent.add(row.id);
+      }
+      const removable = attachments.filter((a) => !stillPresent.has(a.id));
+      for (let i = 0; i < removable.length; i += 500) {
+        const chunk = removable.slice(i, i + 500);
+        try {
+          await env.ATTACHMENTS.delete(chunk.map((a) => a.id));
+          result.deletedAttachments += chunk.length;
+          result.freedBytes += chunk.reduce((sum, a) => sum + (Number(a.size) || 0), 0);
+        } catch (error) {
+          result.errors.push(`R2 delete failed: ${error?.message ?? error}`);
+        }
+      }
+      if (rows.length < RETENTION_BATCH_SIZE) break;
+    }
+  }
+  result.finishedAt = new Date().toISOString();
+  await writeAppSetting(env, RETENTION_LAST_RUN_KEY, result);
+  return result;
+}
+
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        const result = await runRetentionPurge(env, { trigger: "scheduled", at: controller.scheduledTime });
+        if (result.deletedTasks > 0 && env.REALTIME_HUB) {
+          await broadcastRevision(env, await readGlobalRevision(env));
+        }
+      } catch (error) {
+        console.error("[retention] purge failed", error);
+      }
+    })());
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {

@@ -1037,3 +1037,79 @@ test("comment attachment cleanup preserves shared-state boundaries", async () =>
   assert.equal(deleted.response.status, 204);
   assert.deepEqual(await cloud.listAttachmentKeys(), []);
 });
+
+test("data retention overview, settings update, candidate preview, and auto-purge with R2 cleanup", async () => {
+  await createProject("retention-proj");
+  
+  // 1. Initial overview
+  const initialOverview = await cloud.request("/api/retention", { actorName: alice });
+  assert.equal(initialOverview.response.status, 200);
+  assert.equal(initialOverview.body.settings.enabled, true);
+  assert.equal(initialOverview.body.settings.retentionDays, 90);
+  assert.equal(initialOverview.body.settings.includeDone, true);
+
+  // 2. Update retention settings
+  const updateRes = await cloud.request("/api/retention", {
+    method: "PUT",
+    actorName: alice,
+    json: { retentionDays: 30, includeCanceled: true },
+  });
+  assert.equal(updateRes.response.status, 200);
+  assert.equal(updateRes.body.settings.retentionDays, 30);
+
+  // 3. Create a task that will be done and aged
+  const created = await createTask("retention-proj", "Old done task", alice, { status: "todo" });
+  const task = created.body.task;
+
+  // Upload an attachment to this task
+  const uploadRes = await cloud.request(`/api/tasks/${task.id}/attachments`, {
+    method: "POST",
+    actorName: alice,
+    headers: {
+      "content-type": "text/plain",
+      "x-taskboard-filename": "old-doc.txt",
+      "x-taskboard-attachment-kind": "attachment",
+    },
+    body: "old content",
+  });
+  assert.equal(uploadRes.response.status, 201);
+  const attachmentId = uploadRes.body.attachment.id;
+  assert.ok((await cloud.listAttachmentKeys()).includes(attachmentId));
+
+  // Mark task as done
+  await cloud.request(`/api/tasks/${task.id}`, {
+    method: "PATCH",
+    actorName: alice,
+    json: { version: task.version, status: "done" },
+  });
+
+  // Age the task to 40 days ago (> 30 days)
+  const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+  await cloud.db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(fortyDaysAgo, task.id).run();
+
+  // 4. Check retention overview shows this task as candidate and overdue
+  const preview = await cloud.request("/api/retention", { actorName: alice });
+  assert.equal(preview.response.status, 200);
+  assert.equal(preview.body.totals.overdue >= 1, true);
+  const found = preview.body.candidates.find((c) => c.id === task.id);
+  assert.ok(found, "Task should be in candidates list");
+  assert.equal(found.attachmentCount, 1);
+  assert.ok(found.deleteAt);
+
+  // 5. Trigger purge via /api/retention/run
+  const purgeRes = await cloud.request("/api/retention/run", {
+    method: "POST",
+    actorName: alice,
+  });
+  assert.equal(purgeRes.response.status, 200);
+  assert.equal(purgeRes.body.result.deletedTasks >= 1, true);
+  assert.equal(purgeRes.body.result.deletedAttachments >= 1, true);
+
+  // Verify attachment in R2 was deleted
+  assert.ok(!(await cloud.listAttachmentKeys()).includes(attachmentId));
+
+  // Verify task in D1 was deleted
+  const getTaskRes = await cloud.request(`/api/tasks/${task.id}`, { actorName: alice });
+  assert.equal(getTaskRes.response.status, 404);
+});
+
