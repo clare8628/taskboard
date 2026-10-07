@@ -179,6 +179,7 @@ Use this review classification:
 - Merging code does not authorize closing a linked GitHub Issue. Keep it open after merge and report that the implementation is merged and awaiting release.
 - Close a linked GitHub Issue only after a new version containing the change is published and verified. Reply with the merged PR and released version before closing, then record the closure in the local issue.
 - Do not overwrite the App in `/Applications`; leave the installed version available for update-check verification.
+- **Cloudflare Deployment**: Always push commits to GitHub first and allow GitHub/CI to trigger the deployment to Cloudflare. Do not execute manual CLI deployments (`wrangler deploy` / `npm run cloud:deploy`) directly from the local environment.
 
 ## 11. Batch completion
 
