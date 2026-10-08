@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -11,6 +11,7 @@ import { signalProcessTree } from "../shared/process-tree.mjs";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const MAX_COMMENT_LENGTH = 30_000;
+const ATTACHMENT_API_REGEX = /(?:https?:\/\/[^\s)\"'>]+\/api\/attachments\/([a-zA-Z0-9_-]+)\/(?:content|download)|(?:\/)?api\/attachments\/([a-zA-Z0-9_-]+)\/(?:content|download))/g;
 
 export function normalizeWorkspacePath(rawPath) {
   if (typeof rawPath !== "string") return "";
@@ -397,6 +398,100 @@ export function buildAgentTaskPrompt({ project, task, workspacePath, comments = 
   );
 
   return parts.join("\n");
+}
+
+/**
+ * Scan prompt/comments for attachment URLs, download them to workspace `.taskboard/attachments/`,
+ * and replace the URLs with local file paths so local CLI agents can inspect screenshots and assets directly.
+ */
+export async function preparePromptAttachments({ prompt, workspacePath, apiBaseUrl, fetchImpl = globalThis.fetch }) {
+  if (!prompt || typeof prompt !== "string" || !workspacePath) {
+    return { prompt, downloadedFiles: [] };
+  }
+
+  const matches = [...prompt.matchAll(ATTACHMENT_API_REGEX)];
+  if (matches.length === 0) {
+    return { prompt, downloadedFiles: [] };
+  }
+
+  const attachmentsDir = path.join(workspacePath, ".taskboard", "attachments");
+  try {
+    mkdirSync(attachmentsDir, { recursive: true });
+  } catch (err) {
+    console.warn("[AgentRunner] Could not create attachments directory:", err);
+    return { prompt, downloadedFiles: [] };
+  }
+
+  const downloadedFiles = [];
+  let updatedPrompt = prompt;
+
+  for (const match of matches) {
+    const rawUrl = match[0];
+    const attachmentId = match[1] || match[2];
+    if (!attachmentId) continue;
+
+    const targetPattern = path.join(attachmentsDir, `${attachmentId}.*`);
+    let localFilePath = null;
+
+    // Check if already downloaded
+    try {
+      if (existsSync(attachmentsDir)) {
+        const existing = (await import("node:fs")).readdirSync(attachmentsDir);
+        const found = existing.find((f) => f === attachmentId || f.startsWith(`${attachmentId}.`));
+        if (found) {
+          localFilePath = path.join(attachmentsDir, found);
+        }
+      }
+    } catch {}
+
+    if (!localFilePath) {
+      try {
+        const downloadUrl = `${apiBaseUrl.replace(/\/$/, "")}/api/attachments/${encodeURIComponent(attachmentId)}/content`;
+        const res = await fetchImpl(downloadUrl, {
+          headers: {
+            accept: "*/*",
+            "x-taskboard-client": "agent-runner",
+          },
+        });
+
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          const disposition = res.headers.get("content-disposition") || "";
+          const contentType = res.headers.get("content-type") || "";
+
+          // Guess extension
+          let ext = "";
+          const filenameMatch = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+          if (filenameMatch) {
+            ext = path.extname(decodeURIComponent(filenameMatch[1]));
+          }
+          if (!ext) {
+            if (contentType.includes("image/png")) ext = ".png";
+            else if (contentType.includes("image/jpeg")) ext = ".jpg";
+            else if (contentType.includes("image/webp")) ext = ".webp";
+            else if (contentType.includes("image/gif")) ext = ".gif";
+            else if (contentType.includes("image/svg")) ext = ".svg";
+          }
+
+          const filename = `${attachmentId}${ext}`;
+          const savePath = path.join(attachmentsDir, filename);
+          writeFileSync(savePath, buffer);
+          localFilePath = savePath;
+          downloadedFiles.push(savePath);
+        } else {
+          console.warn(`[AgentRunner] Failed to download attachment ${attachmentId}: HTTP ${res.status}`);
+        }
+      } catch (err) {
+        console.warn(`[AgentRunner] Error downloading attachment ${attachmentId}:`, err);
+      }
+    }
+
+    if (localFilePath) {
+      updatedPrompt = updatedPrompt.replaceAll(rawUrl, localFilePath);
+    }
+  }
+
+  return { prompt: updatedPrompt, downloadedFiles };
 }
 
 /**
@@ -967,7 +1062,21 @@ export class AgentRunner {
       console.warn(`[AgentRunner] Could not fetch comments for task ${task.id}:`, err);
     }
 
-    const prompt = buildAgentTaskPrompt({ project, task, workspacePath: targetWorkspace, comments });
+    let prompt = buildAgentTaskPrompt({ project, task, workspacePath: targetWorkspace, comments });
+
+    // Download any attachment images (e.g. screenshots) locally so CLI can directly read/inspect them
+    try {
+      const prepared = await preparePromptAttachments({
+        prompt,
+        workspacePath: targetWorkspace,
+        apiBaseUrl,
+        fetchImpl: this.fetch,
+      });
+      prompt = prepared.prompt;
+    } catch (attachErr) {
+      console.warn(`[AgentRunner] Could not prepare prompt attachments for task ${task.id}:`, attachErr);
+    }
+
     const args = buildAgentCliArgs({ platform, prompt, sessionId, config: safeConfig });
 
     const runState = {

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
@@ -10,6 +13,7 @@ import {
   detectInteractivePrompt,
   evaluateTaskEligibility,
   normalizeWorkspacePath,
+  preparePromptAttachments,
   resolveAgentExecutable,
   stripAnsi,
   validateAgentModel,
@@ -208,6 +212,56 @@ test("buildAgentTaskPrompt treats agentSession comments as agent reports even un
   const pendingSection = prompt.slice(prompt.indexOf("本次待處理的最新指示"), prompt.indexOf("## 任務描述"));
   assert.match(pendingSection, /需可選不同問卷/);
   assert.doesNotMatch(pendingSection, /執行完成報告/);
+});
+
+test("preparePromptAttachments downloads attachment images and replaces URLs with local file paths", async (t) => {
+  const tmpDir = path.join(os.tmpdir(), `test-taskboard-attachments-${Date.now()}`);
+  const promptWithImages = "請參照截圖：![截圖](api/attachments/att-12345/content) 與 [連結](https://board.test/api/attachments/att-67890/content)";
+
+  const mockFetch = async (url) => {
+    if (url.includes("att-12345")) {
+      return {
+        ok: true,
+        headers: new Map([
+          ["content-type", "image/png"],
+          ["content-disposition", 'inline; filename="screenshot.png"'],
+        ]),
+        arrayBuffer: async () => Buffer.from("fake-png-data"),
+      };
+    }
+    if (url.includes("att-67890")) {
+      return {
+        ok: true,
+        headers: new Map([
+          ["content-type", "image/jpeg"],
+        ]),
+        arrayBuffer: async () => Buffer.from("fake-jpg-data"),
+      };
+    }
+    return { ok: false, status: 404 };
+  };
+
+  const result = await preparePromptAttachments({
+    prompt: promptWithImages,
+    workspacePath: tmpDir,
+    apiBaseUrl: "http://127.0.0.1:47823",
+    fetchImpl: mockFetch,
+  });
+
+  const expectedFile1 = path.join(tmpDir, ".taskboard", "attachments", "att-12345.png");
+  const expectedFile2 = path.join(tmpDir, ".taskboard", "attachments", "att-67890.jpg");
+
+  assert.ok(result.prompt.includes(expectedFile1), `Expected ${expectedFile1} in prompt`);
+  assert.ok(result.prompt.includes(expectedFile2), `Expected ${expectedFile2} in prompt`);
+  assert.equal(existsSync(expectedFile1), true);
+  assert.equal(existsSync(expectedFile2), true);
+  assert.equal(readFileSync(expectedFile1).toString(), "fake-png-data");
+
+  // Clean up
+  try {
+    const fs = await import("node:fs");
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch {}
 });
 
 test("evaluateTaskEligibility handles task status, blockers, and agent labels", () => {
