@@ -156,6 +156,11 @@ function contextValue(context: DevelopmentContext | null): string {
   return context ? JSON.stringify(context) : "";
 }
 
+function workspaceFolderName(workspacePath: string | null | undefined): string {
+  if (!workspacePath) return "";
+  return workspacePath.split(/[\\/]/).filter(Boolean).at(-1) || workspacePath;
+}
+
 function contextLabel(
   context: DevelopmentContext,
   text: (chinese: string, english: string) => string,
@@ -659,8 +664,15 @@ export function TaskEditor({
                   value: "",
                   label: developmentScanLoading
                     ? text("正在扫描 Git…", "Scanning Git…")
-                    : text("分支 / Worktree", "Branch / worktree"),
-                  icon: <BranchIcon color="currentColor" size={14} />,
+                    : developmentScan.workspacePath
+                      ? text(
+                          `专案目录 (${workspaceFolderName(developmentScan.workspacePath)})`,
+                          `Workspace (${workspaceFolderName(developmentScan.workspacePath)})`,
+                        )
+                      : text("分支 / Worktree", "Branch / worktree"),
+                  icon: developmentScan.workspacePath && !developmentScanLoading
+                    ? <LinearIcon name="folder" />
+                    : <BranchIcon color="currentColor" size={14} />,
                 },
                 ...developmentOptions.map((context) => ({
                   value: contextValue(context),
@@ -682,7 +694,9 @@ export function TaskEditor({
               popoverClassName="development-context-popover"
               triggerClassName="property-control property-development"
               ariaLabel={text("代码分支或 Worktree", "Code branch or worktree")}
-              title={developmentScan.workspacePath ?? undefined}
+              title={developmentContext?.type === "worktree"
+                ? developmentContext.path
+                : (developmentScan.workspacePath ?? undefined)}
               onOpenChange={(open) => setMenu(open ? "development" : null)}
               onChange={(value) => {
                 if (value === "__bind_workspace__") {

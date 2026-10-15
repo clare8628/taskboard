@@ -220,6 +220,11 @@ function contextValue(context: DevelopmentContext | null): string {
   return context ? JSON.stringify(context) : "";
 }
 
+function workspaceFolderName(workspacePath: string | null | undefined): string {
+  if (!workspacePath) return "";
+  return workspacePath.split(/[\\/]/).filter(Boolean).at(-1) || workspacePath;
+}
+
 function contextLabel(
   context: DevelopmentContext,
   text: (chinese: string, english: string) => string,
@@ -1908,8 +1913,15 @@ export function TaskDetail({
                     value: "",
                     label: developmentScanLoading
                       ? text("正在扫描 Git…", "Scanning Git…")
-                      : text("未绑定", "Not linked"),
-                    icon: <BranchIcon color="currentColor" size={14} />,
+                      : developmentScan.workspacePath
+                        ? text(
+                            `专案目录 (${workspaceFolderName(developmentScan.workspacePath)})`,
+                            `Workspace (${workspaceFolderName(developmentScan.workspacePath)})`,
+                          )
+                        : text("未绑定", "Not linked"),
+                    icon: developmentScan.workspacePath && !developmentScanLoading
+                      ? <LinearIcon name="folder" />
+                      : <BranchIcon color="currentColor" size={14} />,
                   },
                   ...developmentOptions.map((context) => ({
                     value: contextValue(context),
@@ -1932,7 +1944,9 @@ export function TaskDetail({
                 popoverClassName="development-context-popover"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("开发上下文", "Development context")}
-                title={currentTask.developmentContext?.type === "worktree" ? currentTask.developmentContext.path : undefined}
+                title={currentTask.developmentContext?.type === "worktree"
+                  ? currentTask.developmentContext.path
+                  : (developmentScan.workspacePath ?? undefined)}
                 onOpenChange={(open) => setPropertyMenu(open ? "development" : null)}
                 onChange={(value) => {
                   if (value === "__bind_workspace__") {
