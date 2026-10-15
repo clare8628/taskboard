@@ -40,21 +40,31 @@
   NATIVE_OUTLINE_ICONS["builtin:customize"] = NATIVE_OUTLINE_ICONS["builtin:skills"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
+    "新建任務",
     "新聊天",
     "新对话",
+    "新對話",
+    "新分頁",
     "new task",
     "new chat",
     "拉取请求",
+    "拉取請求",
     "pull requests",
     "站点",
+    "站點",
     "sites",
     "已安排",
+    "已排程",
     "scheduled",
+    "schedules",
     "插件",
+    "外掛程式",
     "plugins",
+    "檔案庫",
+    "文件库",
   ];
-  const PROJECT_SECTION_LABELS = ["projects", "项目"];
-  const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
+  const PROJECT_SECTION_LABELS = ["projects", "项目", "專案"];
+  const TASK_SECTION_LABELS = ["tasks", "任务", "任務", "chats", "对话", "對話"];
 
   const previous = window[SENTINEL_KEY];
   if (previous?.sourceHash === SOURCE_HASH && typeof previous.refresh === "function") {
@@ -702,7 +712,7 @@
 
   function nativeSidebarCollapsed() {
     const label = normalizedLabel(nativeSidebarTrigger()?.getAttribute("aria-label"));
-    return label.startsWith("显示") || label.startsWith("show ");
+    return label.startsWith("显示") || label.startsWith("顯示") || label.startsWith("show ");
   }
 
   function sidebarThreadRow(threadId) {
@@ -841,10 +851,14 @@
   }
 
   async function readCodexUser(userId) {
-    const profileButton = Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => (
-      normalizedLabel(button.getAttribute("aria-label")).includes("profile")
-      || normalizedLabel(button.getAttribute("aria-label")).includes("个人资料")
-    ));
+    const profileButton = Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => {
+      const label = normalizedLabel(button.getAttribute("aria-label"));
+      return label.includes("profile")
+        || label.includes("个人资料")
+        || label.includes("個人資料")
+        || label.includes("個人檔案")
+        || label.includes("个人档案");
+    });
     if (!profileButton) throw hostError("未找到 Codex 个人资料菜单", "Could not find the Codex profile menu");
     const openedMenu = profileButton.getAttribute("aria-expanded") !== "true";
     let identity;
@@ -1882,7 +1896,7 @@
 
   function mountActivePage() {
     if (!active) return false;
-    if (document.querySelector('nav[aria-label="Settings"], nav[aria-label="设置"]')) {
+    if (document.querySelector('nav[aria-label="Settings"], nav[aria-label="设置"], nav[aria-label="設定"]')) {
       closeTaskboard(false);
       return false;
     }
@@ -1950,7 +1964,7 @@
     const settingsLabel = settingsControl?.cloneNode(true);
     settingsLabel?.querySelectorAll("span.ms-2.shrink-0.text-xs.text-codex-description")
       .forEach((shortcut) => shortcut.remove());
-    if (buttonMatches(settingsLabel, ["设置", "settings"])) return true;
+    if (buttonMatches(settingsLabel, ["设置", "settings", "設定"])) return true;
 
     const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
