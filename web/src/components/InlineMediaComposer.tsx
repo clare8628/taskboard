@@ -1140,6 +1140,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
     const [completionResponse, setCompletionResponse] = useState<ComposerCandidatesResponse | null>(null);
     const [completionLoading, setCompletionLoading] = useState(false);
     const [completionError, setCompletionError] = useState<string | null>(null);
+    const [dragActive, setDragActive] = useState(false);
 
     disabledRef.current = disabled;
     allowAttachmentsRef.current = allowAttachments;
@@ -1665,6 +1666,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
           return true;
         },
         handleDrop(view, event, _slice, moved) {
+          setDragActive(false);
           if (disabledRef.current || moved) return false;
           const files: File[] = event.dataTransfer
             ? Array.from(event.dataTransfer.files)
@@ -1706,10 +1708,22 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
             view.focus();
             return true;
           },
+          dragenter(_view, event) {
+            if (disabledRef.current || !event.dataTransfer?.types.includes("Files")) return false;
+            event.preventDefault();
+            setDragActive(true);
+            return true;
+          },
           dragover(_view, event) {
             if (disabledRef.current || !event.dataTransfer?.types.includes("Files")) return false;
             event.preventDefault();
             return true;
+          },
+          dragleave(view, event) {
+            const relatedTarget = event.relatedTarget;
+            if (relatedTarget instanceof Node && view.dom.contains(relatedTarget)) return false;
+            setDragActive(false);
+            return false;
           },
           blur() {
             armedMediaAtom.current = null;
@@ -1771,6 +1785,10 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
     useEffect(() => {
       if (disabled || (!completionContext && mentionTasks.length === 0)) closeCompletion();
     }, [completionContext, disabled, mentionTasks.length]);
+
+    useEffect(() => {
+      if (disabled) setDragActive(false);
+    }, [disabled]);
 
     useEffect(() => {
       if (!completionQuery || !completionContext) {
@@ -1879,10 +1897,15 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
     ]) => createPortal(<MermaidDiagram source={source} />, host, id));
 
     return (
-      <>
+      <div className={`inline-media-composer-frame${dragActive ? " is-drag-active" : ""}`}>
         <div ref={editorElement} />
         {atomPortals}
         {mermaidPortals}
+        {dragActive && (
+          <div className="inline-media-composer-drop-hint" aria-hidden="true">
+            {text("松开以添加附件", "Drop files to add them")}
+          </div>
+        )}
         {completionQuery
           && (completionLoading || completionError !== null || completionSelections.length > 0)
           && (
@@ -1916,7 +1939,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
             onClose={closeCompletion}
           />
           )}
-      </>
+      </div>
     );
   },
 );
