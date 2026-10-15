@@ -884,6 +884,13 @@ function parseProjectCreate(body) {
   return { id, name };
 }
 
+function parseProjectUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["name"]));
+  const name = stringField(body.name, "name", { required: true, maxLength: 120 });
+  return { name };
+}
+
 function parseClientStorageUpdate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["key", "value"]));
@@ -1052,6 +1059,17 @@ async function deleteProjectLabel(env, projectId, label) {
     `).bind(label, timestamp, projectId, label),
   ]);
   return getProject(env, projectId);
+}
+
+async function updateProject(env, id, input) {
+  await requireProject(env, id);
+  const timestamp = now();
+  await env.DB.prepare(`
+    UPDATE projects
+    SET name = ?, updated_at = ?
+    WHERE id = ?
+  `).bind(input.name, timestamp, id).run();
+  return getProject(env, id);
 }
 
 async function deleteProject(env, id) {
@@ -2603,7 +2621,12 @@ async function routeApi(request, env, actor, url) {
   if (projectMatch) {
     requireNoQuery(url, "Project routes");
     const projectId = validateProjectId(decodePathPart(projectMatch[1], "Project id"));
-    if (request.method !== "DELETE") methodNotAllowed(["DELETE"]);
+    if (request.method === "PATCH") {
+      const updates = parseProjectUpdate(await readJson(request));
+      const project = await updateProject(env, projectId, updates);
+      return json(200, { project });
+    }
+    if (request.method !== "DELETE") methodNotAllowed(["PATCH", "DELETE"]);
     await deleteProject(env, projectId);
     return empty(204);
   }

@@ -131,6 +131,20 @@ test("projects, tasks, comments, and relations preserve the current API contract
   });
   assert.equal(listed.response.status, 200);
   assert.ok(listed.body.tasks.some((task) => task.id === child.body.task.id));
+
+  const renamed = await cloud.request("/api/projects/alpha", {
+    method: "PATCH",
+    actorName: alice,
+    json: { name: "Renamed Alpha" },
+  });
+  assert.equal(renamed.response.status, 200);
+  assert.equal(renamed.body.project.name, "Renamed Alpha");
+
+  await cloud.request("/api/projects/alpha", {
+    method: "PATCH",
+    actorName: alice,
+    json: { name: "Alpha" },
+  });
 });
 
 test("concurrent issue creation has unique identifiers and stale writes return 409", async () => {

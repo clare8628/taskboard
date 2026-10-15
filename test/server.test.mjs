@@ -703,6 +703,20 @@ test("project and task CRUD flow", async () => {
   assert.equal(projectResult.body.project.id, "website");
   assert.equal(projectResult.body.project.workspacePath, "/work/website");
 
+  const renameResult = await request(baseUrl, "/api/projects/website", {
+    method: "PATCH",
+    body: { name: "Renamed Website" },
+  });
+  assert.equal(renameResult.response.status, 200);
+  assert.equal(renameResult.body.project.name, "Renamed Website");
+
+  const restoreProjectNameResult = await request(baseUrl, "/api/projects/website", {
+    method: "PATCH",
+    body: { name: "Website" },
+  });
+  assert.equal(restoreProjectNameResult.response.status, 200);
+  assert.equal(restoreProjectNameResult.body.project.name, "Website");
+
   const createResult = await request(baseUrl, "/api/tasks", {
     method: "POST",
     body: {

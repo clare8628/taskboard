@@ -46,6 +46,7 @@ import {
   setCurrentUserActor,
   setProjectWorkspaceMapping as setProjectWorkspaceMappingRequest,
   syncJiraConnection,
+  updateProject as updateProjectRequest,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
@@ -74,6 +75,7 @@ import {
 import { LinearIcon } from "./components/LinearIcon";
 import {
   DeleteIcon,
+  EditIcon,
   MoreIcon,
   PlusIcon,
   RefreshIcon,
@@ -855,12 +857,20 @@ export function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(
     () => taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
   );
+  const companionBase = useMemo(() => {
+    const baseOrigin = new URL(document.baseURI).origin;
+    const isLoopback = baseOrigin === "http://127.0.0.1:47823"
+      || baseOrigin === "http://localhost:47823"
+      || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(baseOrigin);
+    return isLoopback ? baseOrigin : "http://127.0.0.1:47823";
+  }, []);
   const [projectMenuSearch, setProjectMenuSearch] = useState("");
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectWorkspacePath, setProjectWorkspacePath] = useState("");
   const [workspacePathEditor, setWorkspacePathEditor] = useState<{ projectId: string; projectName: string; path: string } | null>(null);
+  const [projectNameEditor, setProjectNameEditor] = useState<{ projectId: string; currentName: string; name: string } | null>(null);
   const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [jiraConnection, setJiraConnection] = useState<JiraConnection | null>(null);
   const [jiraSaving, setJiraSaving] = useState(false);
@@ -959,8 +969,8 @@ export function App() {
     if (!normalized) return;
     // Changing the remembered path re-runs the development scan effect for the active project.
     rememberDeviceWorkspacePath(targetId, normalized);
-    await setProjectWorkspaceMappingRequest(targetId, normalized);
-  }, [rememberDeviceWorkspacePath]);
+    await setProjectWorkspaceMappingRequest(targetId, normalized, companionBase);
+  }, [companionBase, rememberDeviceWorkspacePath]);
 
   const openWorkspacePathEditor = useCallback((projectId: string) => {
     const targetId = projectId || GLOBAL_PROJECT_ID;
@@ -2583,14 +2593,6 @@ export function App() {
     setOtherTasksTab(otherTaskTabs[0]);
   }, [otherTaskTabsKey, otherTasksAvailable, otherTasksTab]);
 
-  const companionBase = useMemo(() => {
-    const baseOrigin = new URL(document.baseURI).origin;
-    const isLoopback = baseOrigin === "http://127.0.0.1:47823"
-      || baseOrigin === "http://localhost:47823"
-      || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(baseOrigin);
-    return isLoopback ? baseOrigin : "http://127.0.0.1:47823";
-  }, []);
-
   const [agentHealth, setAgentHealth] = useState<{
     activeRuns: { taskId: string; platform: string; lastLine?: string | null; recentLines?: string[]; lastOutputAt?: number | null; startedAt?: number }[];
   } | null>(null);
@@ -3645,7 +3647,7 @@ export function App() {
       });
       if (workspacePath) {
         rememberDeviceWorkspacePath(project.id, workspacePath);
-        void setProjectWorkspaceMappingRequest(project.id, workspacePath);
+        void setProjectWorkspaceMappingRequest(project.id, workspacePath, companionBase);
       }
       setProjects((current) => [...current, project]);
       setProjectCreateOpen(false);
@@ -3778,6 +3780,24 @@ export function App() {
                   <span className="project-name">{headerProjectName}</span>
                   <TaskboardIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
+                {selectedProject && selectedProject.id !== ALL_PROJECTS_ID && !isJiraProject && (
+                  <button
+                    type="button"
+                    className="header-icon-button header-project-rename-btn"
+                    style={{ marginLeft: 4, opacity: 0.7, padding: 4, display: "inline-flex", alignItems: "center", cursor: "pointer", background: "none", border: "none", color: "inherit", borderRadius: 4 }}
+                    title={text("重命名项目", "Rename project")}
+                    aria-label={text("重命名项目", "Rename project")}
+                    onClick={() => {
+                      setProjectNameEditor({
+                        projectId: selectedProject.id,
+                        currentName: selectedProject.name,
+                        name: selectedProject.name,
+                      });
+                    }}
+                  >
+                    <EditIcon color="currentColor" size={14} />
+                  </button>
+                )}
                 {projectMenuOpen && (
                   <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
                     <span>{text("切换项目", "Switch project")}</span>
@@ -4420,6 +4440,23 @@ export function App() {
             className="context-menu-item"
             type="button"
             role="menuitem"
+            onClick={() => {
+              const target = projectContextMenu.project;
+              setProjectNameEditor({
+                projectId: target.id,
+                currentName: target.name,
+                name: target.name,
+              });
+              setProjectContextMenu(null);
+            }}
+          >
+            <span className="context-menu-icon" aria-hidden="true"><EditIcon color="currentColor" /></span>
+            <span className="context-menu-label">{text("重命名项目…", "Rename project…")}</span>
+          </button>
+          <button
+            className="context-menu-item"
+            type="button"
+            role="menuitem"
             onClick={() => openWorkspacePathEditor(projectContextMenu.project.id)}
             title={deviceWorkspacePaths[projectContextMenu.project.id] ?? undefined}
           >
@@ -4505,6 +4542,61 @@ export function App() {
                 {text("取消", "Cancel")}
               </button>
               <button className="button primary" type="submit" disabled={!workspacePathEditor.path.trim()}>
+                {text("保存", "Save")}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {projectNameEditor && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setProjectNameEditor(null);
+          }}
+        >
+          <form
+            className="delete-dialog project-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-rename-title"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const newName = projectNameEditor.name.trim();
+              if (!newName || newName === projectNameEditor.currentName) {
+                setProjectNameEditor(null);
+                return;
+              }
+              const targetId = projectNameEditor.projectId;
+              setProjectNameEditor(null);
+              try {
+                const updated = await updateProjectRequest(targetId, { name: newName });
+                setProjects((prev) => prev.map((p) => (p.id === targetId ? { ...p, name: updated.name } : p)));
+              } catch (err) {
+                console.error("Failed to rename project:", err);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setProjectNameEditor(null);
+            }}
+          >
+            <h2 id="project-rename-title">{text("重命名项目", "Rename project")} · {projectNameEditor.currentName}</h2>
+            <label>
+              <span>{text("项目名称", "Project name")}</span>
+              <input
+                autoFocus
+                maxLength={120}
+                required
+                value={projectNameEditor.name}
+                onChange={(event) => setProjectNameEditor({ ...projectNameEditor, name: event.target.value })}
+              />
+            </label>
+            <div>
+              <button className="button secondary" type="button" onClick={() => setProjectNameEditor(null)}>
+                {text("取消", "Cancel")}
+              </button>
+              <button className="button primary" type="submit" disabled={!projectNameEditor.name.trim() || projectNameEditor.name.trim() === projectNameEditor.currentName}>
                 {text("保存", "Save")}
               </button>
             </div>

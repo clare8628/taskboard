@@ -965,6 +965,16 @@ export class TaskboardDatabase {
     return this.getProject(id);
   }
 
+  updateProjectName(id, name) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE projects
+      SET name = ?, updated_at = ?
+      WHERE id = ?
+    `).run(name, timestamp, id);
+    return this.getProject(id);
+  }
+
   ensureJiraProject(name) {
     const timestamp = now();
     this.database.prepare(`

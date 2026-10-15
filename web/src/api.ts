@@ -551,19 +551,40 @@ export async function createProject(input: {
   return data.project;
 }
 
+export async function updateProject(
+  projectId: string,
+  updates: { name: string },
+): Promise<Project> {
+  const data = await request<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    },
+  );
+  return data.project;
+}
+
 export async function setProjectWorkspaceMapping(
   projectId: string,
   workspacePath: string,
+  companionBase?: string,
 ): Promise<{ projectId: string; workspacePath: string } | null> {
+  const targetUrl = companionBase
+    ? `${companionBase.replace(/\/$/, "")}/api/local/project-mappings/${encodeURIComponent(projectId)}`
+    : resolveTaskboardUrl(`/api/local/project-mappings/${encodeURIComponent(projectId)}`);
   try {
-    const data = await request<{ projectId: string; workspacePath: string }>(
-      `/api/local/project-mappings/${encodeURIComponent(projectId)}`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ workspacePath }),
+    const res = await fetch(targetUrl, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "x-taskboard-client": "web-ui",
       },
-    );
-    return data;
+      body: JSON.stringify({ workspacePath }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as { projectId: string; workspacePath: string };
   } catch {
     return null;
   }

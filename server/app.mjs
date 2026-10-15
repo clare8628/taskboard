@@ -394,6 +394,13 @@ function parseProjectCreate(body) {
   return { id, name, workspacePath };
 }
 
+function parseProjectUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["name"]));
+  const name = stringField(body.name, "name", { required: true, maxLength: 120 });
+  return { name };
+}
+
 function requestHeader(request, name) {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
@@ -1753,9 +1760,13 @@ export function createTaskboardServer(options = {}) {
     response.setHeader("referrer-policy", "no-referrer");
     try {
       const incomingUrl = new URL(request.url, "http://127.0.0.1");
-      const isAgentRunnerPath = incomingUrl.pathname.startsWith("/api/local/agent-runner/")
-        || (Boolean(routePrefix) && incomingUrl.pathname.startsWith(`${routePrefix}/api/local/agent-runner/`));
-      if (resolved.instanceToken && incomingUrl.pathname !== "/health" && !isAgentRunnerPath) {
+      const isCompanionPath = incomingUrl.pathname.startsWith("/api/local/agent-runner/")
+        || incomingUrl.pathname.startsWith("/api/local/project-mappings/")
+        || (Boolean(routePrefix) && (
+          incomingUrl.pathname.startsWith(`${routePrefix}/api/local/agent-runner/`)
+          || incomingUrl.pathname.startsWith(`${routePrefix}/api/local/project-mappings/`)
+        ));
+      if (resolved.instanceToken && incomingUrl.pathname !== "/health" && !isCompanionPath) {
         if (incomingUrl.pathname === routePrefix) {
           response.writeHead(301, { location: `${incomingUrl.pathname}/${incomingUrl.search}` });
           response.end();
@@ -1781,7 +1792,7 @@ export function createTaskboardServer(options = {}) {
         request,
         Boolean(resolved.instanceToken),
         activeTrustedOrigins,
-        isAgentRunnerPath,
+        isCompanionPath,
       );
       const origin = request.headers.origin;
       let isLoopbackOrigin = false;
@@ -1794,7 +1805,7 @@ export function createTaskboardServer(options = {}) {
         || activeTrustedOrigins.has(origin)
         || isLoopbackOrigin
         || (Boolean(resolved.instanceToken) && origin === "null")
-        || (isAgentRunnerPath && Boolean(origin));
+        || (isCompanionPath && Boolean(origin));
       if (trustedEmbedOrigin) {
         response.setHeader("access-control-allow-origin", origin);
         response.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -1825,11 +1836,12 @@ export function createTaskboardServer(options = {}) {
       const pathname = url.pathname;
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
       const isDevelopmentContextsRoute = /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
-      const isAgentRunnerRoute = pathname.startsWith("/api/local/agent-runner/");
+      const isCompanionRoute = pathname.startsWith("/api/local/agent-runner/")
+        || pathname.startsWith("/api/local/project-mappings/");
       if (
         configuredTrustedRequest
         && (
-          (pathname.startsWith("/api/local/") && !isAgentRunnerRoute)
+          (pathname.startsWith("/api/local/") && !isCompanionRoute)
           || pathname === "/api/device-workspaces"
           || isDevelopmentContextsRoute
         )
@@ -1842,7 +1854,7 @@ export function createTaskboardServer(options = {}) {
       }
       if (isLocalAiRoute) {
         assertAiLoopbackRequest(request);
-      } else if (pathname.startsWith("/api/local/") && !isAgentRunnerRoute) {
+      } else if (pathname.startsWith("/api/local/") && !isCompanionRoute) {
         assertLoopbackRequest(request);
       }
       const isMachineCapabilityRoute = pathname === "/api/meta"
@@ -2452,11 +2464,17 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
         }
         validateProjectId(projectId);
+        if (request.method === "PATCH") {
+          const updates = parseProjectUpdate(await readJson(request));
+          const project = database.updateProjectName(projectId, updates.name);
+          events.emit("project.updated", { project });
+          return sendJson(response, 200, { project });
+        }
         if (request.method === "DELETE") {
           database.deleteProject(projectId);
           return sendEmpty(response, 204);
         }
-        return methodNotAllowed(response, ["DELETE"]);
+        return methodNotAllowed(response, ["PATCH", "DELETE"]);
       }
 
       const projectLabelsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/labels$/);
