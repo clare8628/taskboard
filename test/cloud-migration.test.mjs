@@ -1151,8 +1151,9 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
   await runMigration("import", bundleDirectory, persistTo);
   await runMigration("verify", bundleDirectory, persistTo);
 
+  const wranglerConfigContent = await readFile(wranglerConfig, "utf8");
   const configuredDatabaseId = JSON.parse(
-    await readFile(wranglerConfig, "utf8"),
+    wranglerConfigContent.replace(/\/\/.*$/gm, ""),
   ).d1_databases[0].database_id;
   const miniflare = new Miniflare({
     modules: true,
