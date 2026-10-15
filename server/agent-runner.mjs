@@ -577,6 +577,8 @@ export class AgentRunner {
   start() {
     if (this.closed || this.timer) return;
 
+    warmUpSystemDirectoryPicker();
+
     this.timer = setInterval(() => void this.checkAndDispatch(), this.pollIntervalMs);
     this.timer.unref?.();
 
@@ -1353,6 +1355,23 @@ export class AgentRunner {
   }
 }
 
+let macDirectoryPickerWarmedUp = false;
+
+/**
+ * Fire-and-forget a no-UI osascript call so macOS loads the Open Scripting
+ * Architecture / Standard Additions components ahead of time. The first
+ * `osascript` invocation of a process's lifetime pays this load cost
+ * synchronously, which is what makes the native "choose folder" panel feel
+ * like it takes forever to appear on the user's very first pick. Running it
+ * once at server startup (not on the user's click path) absorbs that cost
+ * before anyone is waiting on it.
+ */
+function warmUpSystemDirectoryPicker() {
+  if (process.platform !== "darwin" || macDirectoryPickerWarmedUp) return;
+  macDirectoryPickerWarmedUp = true;
+  execFileAsync("osascript", ["-e", "return 1"]).catch(() => {});
+}
+
 /**
  * Open a native OS folder selection dialog and return the selected path.
  * Supports macOS (osascript), Windows (PowerShell FolderBrowserDialog), and Linux (zenity/kdialog).
@@ -1362,7 +1381,13 @@ export async function chooseSystemDirectory({ initialPath = "", prompt = "請選
   const initialExists = Boolean(normInitial && existsSync(normInitial));
 
   if (process.platform === "darwin") {
-    let script = "activate\n";
+    // "tell me to activate" targets osascript's own process explicitly, so the
+    // folder panel reliably comes to the front. A bare "activate" (no target)
+    // and a "tell application \"System Events\" to activate" wrapper were both
+    // tried before (see git history) - the former left focus ambiguous, and the
+    // latter required a one-time Automation permission grant that, until
+    // approved, made the panel appear to hang.
+    let script = "tell me to activate\n";
     if (initialExists) {
       const safePath = normInitial.replace(/"/g, '\\"');
       script += `POSIX path of (choose folder with prompt "${prompt.replace(/"/g, '\\"')}" default location (POSIX file "${safePath}"))`;
