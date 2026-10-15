@@ -970,6 +970,17 @@ export function App() {
     // Changing the remembered path re-runs the development scan effect for the active project.
     rememberDeviceWorkspacePath(targetId, normalized);
     await setProjectWorkspaceMappingRequest(targetId, normalized, companionBase);
+
+    const existingAuto = projectAutomationsRef.current[targetId];
+    if (existingAuto && existingAuto.workspacePath !== normalized) {
+      const next = {
+        ...projectAutomationsRef.current,
+        [targetId]: { ...existingAuto, workspacePath: normalized },
+      };
+      projectAutomationsRef.current = next;
+      setProjectAutomations(next);
+      taskboardStorage.setItem(PROJECT_AUTOMATIONS_KEY, JSON.stringify(next));
+    }
   }, [companionBase, rememberDeviceWorkspacePath]);
 
   const openWorkspacePathEditor = useCallback((projectId: string) => {

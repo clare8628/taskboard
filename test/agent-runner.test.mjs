@@ -749,6 +749,51 @@ test("AgentRunner blocks task without spawning when workspacePath does not exist
   await runner.close();
 });
 
+test("cloud companion skips task instead of blocking when workspacePath is missing or non-existent", async () => {
+  const apiCalls = [];
+  let spawned = false;
+  const runner = new AgentRunner({
+    isCloudCompanion: true,
+    readClientStorage: async () => ({
+      "taskboard.projectAutomations.v1": JSON.stringify({
+        "proj-missing-cloud": { status: "ACTIVE", agentPlatform: "claude" },
+      }),
+    }),
+    apiBaseUrl: "http://127.0.0.1:47823",
+    fetch: async (url, init = {}) => {
+      const s = String(url);
+      apiCalls.push({ url: s, body: init.body ? JSON.parse(init.body) : null });
+      if (s.endsWith("/api/projects")) {
+        return { ok: true, json: async () => ({ projects: [{ id: "proj-missing-cloud", name: "CloudProject", workspacePath: "/work/missing" }] }) };
+      }
+      if (s.includes("/api/tasks?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tasks: [{ id: "task-missing-cloud", identifier: "MIS-2", projectId: "proj-missing-cloud", status: "todo", version: 1, relations: { blockedBy: [] } }],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+    spawnProcess: () => {
+      spawned = true;
+      return new MockChildProcess(0, "", "");
+    },
+    pathExists: () => false,
+  });
+
+  await runner.dispatchProject("proj-missing-cloud", { status: "ACTIVE", agentPlatform: "claude" });
+
+  assert.equal(spawned, false);
+  const comment = apiCalls.find((c) => c.url.endsWith("/tasks/task-missing-cloud/comments"));
+  assert.equal(comment, undefined);
+  const move = apiCalls.find((c) => c.url.endsWith("/tasks/task-missing-cloud/move"));
+  assert.equal(move, undefined);
+
+  await runner.close();
+});
+
 test("stripAnsi removes color and control sequences", () => {
   const colored = "\u001b[32mSuccess\u001b[39m and \u001b[1mBold\u001b[22m";
   assert.equal(stripAnsi(colored), "Success and Bold");

@@ -1743,7 +1743,25 @@ export function createTaskboardServer(options = {}) {
 
   let server = null;
   const agentRunner = options.agentRunner ?? new AgentRunner({
-    readClientStorage,
+    readClientStorage: async () => {
+      const entries = await readClientStorage();
+      const config = await cloudConfig.read().catch(() => null);
+      if (config?.remoteUrl) {
+        try {
+          const shared = await readCloudJson("/api/client-storage");
+          if (shared?.entries && typeof shared.entries === "object") {
+            if (shared.entries["taskboard.projectAutomations.v1"]) {
+              entries["taskboard.projectAutomations.v1"] = shared.entries["taskboard.projectAutomations.v1"];
+            }
+          }
+        } catch {}
+      }
+      return entries;
+    },
+    isCloudCompanion: async () => {
+      const config = await cloudConfig.read().catch(() => null);
+      return Boolean(config?.remoteUrl);
+    },
     apiBaseUrl: () => {
       const addr = server?.address();
       const port = addr && typeof addr === "object" ? addr.port : resolvePort();

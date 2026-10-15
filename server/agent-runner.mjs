@@ -560,6 +560,7 @@ export class AgentRunner {
     this.isCustomSpawnProcess = Boolean(options.spawnProcess);
     this.pathExists = options.pathExists ?? (this.isCustomSpawnProcess ? () => true : existsSync);
     this.checkAgentAuthFn = options.checkAgentAuth ?? null;
+    this.isCloudCompanion = options.isCloudCompanion ?? false;
 
     this.activeRuns = new Map(); // taskId -> { child, promise, platform, sessionId, startedAt }
     this.projectRuns = new Set(); // projectId
@@ -915,6 +916,13 @@ export class AgentRunner {
       if (!targetTask || !targetPlatform) return;
 
       if (!workspacePath || !this.pathExists(workspacePath)) {
+        const isCloud = typeof this.isCloudCompanion === "function"
+          ? await this.isCloudCompanion()
+          : Boolean(this.isCloudCompanion);
+        if (isCloud) {
+          console.warn(`[AgentRunner] Project '${project.name}' workspacePath is invalid on this companion: "${workspacePath}". Skipping task ${targetTask.id} to allow other eligible runners.`);
+          return;
+        }
         console.warn(`[AgentRunner] Project '${project.name}' workspacePath is invalid: "${workspacePath}". Blocking task ${targetTask.id}`);
         try {
           await this.fetch(
