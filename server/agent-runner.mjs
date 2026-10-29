@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 import { signalProcessTree } from "../shared/process-tree.mjs";
 
-const DEFAULT_POLL_INTERVAL_MS = 60_000;
+export const DEFAULT_POLL_INTERVAL_MS = 120_000;
 const MAX_COMMENT_LENGTH = 30_000;
 const ATTACHMENT_API_REGEX = /(?:https?:\/\/[^\s)\"'>]+\/api\/attachments\/([a-zA-Z0-9_-]+)\/(?:content|download)|(?:\/)?api\/attachments\/([a-zA-Z0-9_-]+)\/(?:content|download))/g;
 

@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import {
   AgentRunner,
+  DEFAULT_POLL_INTERVAL_MS,
   buildAgentCliArgs,
   buildAgentTaskPrompt,
   chooseSystemDirectory,
@@ -1063,6 +1064,15 @@ test("AgentRunner sendInput writes input to child process stdin with trailing ne
   await dispatchPromise;
   await runner.close();
 });
+
+test("DEFAULT_POLL_INTERVAL_MS is 2 minutes (120_000ms) and AgentRunner defaults to it", () => {
+  assert.equal(DEFAULT_POLL_INTERVAL_MS, 120_000);
+  const runner = new AgentRunner({
+    readClientStorage: async () => ({}),
+  });
+  assert.equal(runner.pollIntervalMs, 120_000);
+});
+
 
 
 
