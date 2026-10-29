@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 import { signalProcessTree } from "../shared/process-tree.mjs";
 
-export const DEFAULT_POLL_INTERVAL_MS = 120_000;
+export const DEFAULT_POLL_INTERVAL_MS = 300_000;
 const MAX_COMMENT_LENGTH = 30_000;
 const ATTACHMENT_API_REGEX = /(?:https?:\/\/[^\s)\"'>]+\/api\/attachments\/([a-zA-Z0-9_-]+)\/(?:content|download)|(?:\/)?api\/attachments\/([a-zA-Z0-9_-]+)\/(?:content|download))/g;
 
@@ -567,6 +567,8 @@ export class AgentRunner {
     this.authCache = new Map(); // platform -> { authenticated: boolean, timestamp: number }
     this.closed = false;
     this.timer = null;
+    this.lastPollAt = null;
+    this.nextPollAt = null;
     this.eventListeners = [];
   }
 
@@ -575,13 +577,26 @@ export class AgentRunner {
     return String(raw || "http://127.0.0.1:47823").replace(/\/$/, "");
   }
 
+  scheduleTimer() {
+    if (this.closed) return;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.nextPollAt = Date.now() + this.pollIntervalMs;
+    this.timer = setInterval(() => {
+      this.nextPollAt = Date.now() + this.pollIntervalMs;
+      void this.checkAndDispatch();
+    }, this.pollIntervalMs);
+    this.timer.unref?.();
+  }
+
   start() {
     if (this.closed || this.timer) return;
 
     warmUpSystemDirectoryPicker();
 
-    this.timer = setInterval(() => void this.checkAndDispatch(), this.pollIntervalMs);
-    this.timer.unref?.();
+    this.scheduleTimer();
 
     if (this.events) {
       const onStorageUpdated = ({ key }) => {
@@ -622,6 +637,9 @@ export class AgentRunner {
       })),
       runningProjects: [...this.projectRuns],
       closed: this.closed,
+      pollIntervalMs: this.pollIntervalMs,
+      lastPollAt: this.lastPollAt,
+      nextPollAt: this.nextPollAt,
     };
   }
 
@@ -769,6 +787,7 @@ export class AgentRunner {
       agyInstalled ? this.checkAgentAuth("agy", agyPath) : Promise.resolve(false),
     ]);
 
+    const currentStatus = this.status();
     return {
       status: "ready",
       claude: {
@@ -781,8 +800,11 @@ export class AgentRunner {
         executable: agyPath,
         authenticated: agyAuth,
       },
-      activeRuns: this.status().activeRuns,
-      runningProjects: this.status().runningProjects,
+      activeRuns: currentStatus.activeRuns,
+      runningProjects: currentStatus.runningProjects,
+      pollIntervalMs: currentStatus.pollIntervalMs,
+      lastPollAt: currentStatus.lastPollAt,
+      nextPollAt: currentStatus.nextPollAt,
     };
   }
 
@@ -828,6 +850,8 @@ export class AgentRunner {
 
   async checkAndDispatch() {
     if (this.closed) return;
+    this.lastPollAt = Date.now();
+    this.scheduleTimer();
 
     let entries = {};
     try {
@@ -1324,6 +1348,7 @@ export class AgentRunner {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.nextPollAt = null;
 
     for (const unsubscribe of this.eventListeners) {
       try {

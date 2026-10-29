@@ -1065,12 +1065,19 @@ test("AgentRunner sendInput writes input to child process stdin with trailing ne
   await runner.close();
 });
 
-test("DEFAULT_POLL_INTERVAL_MS is 2 minutes (120_000ms) and AgentRunner defaults to it", () => {
-  assert.equal(DEFAULT_POLL_INTERVAL_MS, 120_000);
+test("DEFAULT_POLL_INTERVAL_MS is 5 minutes (300_000ms) and AgentRunner defaults to it and tracks nextPollAt", () => {
+  assert.equal(DEFAULT_POLL_INTERVAL_MS, 300_000);
   const runner = new AgentRunner({
     readClientStorage: async () => ({}),
   });
-  assert.equal(runner.pollIntervalMs, 120_000);
+  assert.equal(runner.pollIntervalMs, 300_000);
+  runner.start();
+  assert.ok(runner.nextPollAt !== null);
+  assert.ok(runner.nextPollAt > Date.now());
+  const status = runner.status();
+  assert.equal(status.pollIntervalMs, 300_000);
+  assert.ok(status.nextPollAt !== null);
+  runner.close();
 });
 
 

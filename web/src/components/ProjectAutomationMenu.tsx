@@ -51,6 +51,9 @@ export interface AgentHealthInfo {
   claude: { installed: boolean; executable?: string; authenticated: boolean };
   agy: { installed: boolean; executable?: string; authenticated: boolean };
   activeRuns: Array<{ taskId: string; platform: string; lastLine?: string | null; lastOutputAt?: number | null; startedAt?: number }>;
+  pollIntervalMs?: number;
+  lastPollAt?: number | null;
+  nextPollAt?: number | null;
 }
 
 function formatCountdown(seconds: number): string {
@@ -340,16 +343,38 @@ export function ProjectAutomationMenu({
   const isExecuting = Boolean(health?.activeRuns && health.activeRuns.length > 0);
 
   useEffect(() => {
-    setSecondsRemaining((draft.intervalMinutes ?? 5) * 60);
-  }, [draft.intervalMinutes, status]);
+    if (health?.nextPollAt) {
+      const diff = Math.max(0, Math.round((health.nextPollAt - Date.now()) / 1000));
+      setSecondsRemaining(diff);
+    } else {
+      setSecondsRemaining((draft.intervalMinutes ?? 5) * 60);
+    }
+  }, [draft.intervalMinutes, status, health?.nextPollAt]);
 
   useEffect(() => {
     if (status !== "ACTIVE" || !draft.enabledByUser) return;
     const timer = setInterval(() => {
-      setSecondsRemaining((prev) => (prev <= 1 ? (draft.intervalMinutes ?? 5) * 60 : prev - 1));
+      setSecondsRemaining((prev) => {
+        if (health?.nextPollAt) {
+          const diff = Math.max(0, Math.round((health.nextPollAt - Date.now()) / 1000));
+          if (diff <= 0) {
+            void fetchHealth();
+          }
+          return diff;
+        }
+        return prev <= 1 ? (draft.intervalMinutes ?? 5) * 60 : prev - 1;
+      });
     }, 1000);
     return () => clearInterval(timer);
-  }, [draft.enabledByUser, draft.intervalMinutes, status]);
+  }, [draft.enabledByUser, draft.intervalMinutes, status, health?.nextPollAt, fetchHealth]);
+
+  useEffect(() => {
+    const handleDispatch = () => {
+      setTimeout(() => void fetchHealth(), 300);
+    };
+    window.addEventListener("agent-runner-dispatch", handleDispatch);
+    return () => window.removeEventListener("agent-runner-dispatch", handleDispatch);
+  }, [fetchHealth]);
 
   const handleClaimNow = async () => {
     if (claimingNow) return;
@@ -358,7 +383,7 @@ export function ProjectAutomationMenu({
       if (onClaimNow) {
         await onClaimNow();
       }
-      setSecondsRemaining((draft.intervalMinutes ?? 5) * 60);
+      await fetchHealth();
     } finally {
       setClaimingNow(false);
     }
