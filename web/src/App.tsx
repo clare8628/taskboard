@@ -2671,11 +2671,17 @@ export function App() {
   }, [companionBase, fetchAgentHealth]);
 
   useEffect(() => {
-    const handleAgentDispatch = async () => {
+    const handleAgentDispatch = async (event?: Event) => {
       try {
+        const customEvent = event as CustomEvent<{ taskId?: string }> | undefined;
+        const taskId = customEvent?.detail?.taskId;
         await fetch(`${companionBase}/api/local/agent-runner/dispatch`, {
           method: "POST",
-          headers: { "x-taskboard-client": "web-ui" },
+          headers: {
+            "content-type": "application/json",
+            "x-taskboard-client": "web-ui",
+          },
+          body: taskId ? JSON.stringify({ taskId }) : undefined,
         });
         void fetchAgentHealth();
       } catch (e) {
@@ -2991,6 +2997,13 @@ export function App() {
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === moved.id ? moved : candidate,
       )));
+      if (status === "in_progress" && previous.status !== "in_progress") {
+        window.dispatchEvent(
+          new CustomEvent("agent-runner-dispatch", {
+            detail: { taskId: moved.id },
+          }),
+        );
+      }
       pushUndo(null, async () => {
         const candidate = tasksRef.current.find((current) => current.id === moved.id);
         const current = candidate && candidate.version >= moved.version ? candidate : moved;

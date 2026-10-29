@@ -2260,7 +2260,14 @@ export function createTaskboardServer(options = {}) {
       if (pathname === "/api/local/agent-runner/dispatch") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         assertNoQuery(url.searchParams, "POST /api/local/agent-runner/dispatch");
-        void agentRunner.checkAndDispatch();
+        let taskId = null;
+        try {
+          const body = await readJson(request);
+          if (body && typeof body.taskId === "string") {
+            taskId = body.taskId;
+          }
+        } catch {}
+        void agentRunner.checkAndDispatch(taskId ? { taskId } : {});
         return sendJson(response, 200, { status: "dispatched" });
       }
 

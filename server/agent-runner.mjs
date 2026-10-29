@@ -497,8 +497,12 @@ export async function preparePromptAttachments({ prompt, workspacePath, apiBaseU
 /**
  * Determine if a task is eligible for dispatch by this runner.
  */
-export function evaluateTaskEligibility(task, projectConfig) {
-  if (!task || task.status !== "todo" || task.archivedAt != null) {
+export function evaluateTaskEligibility(task, projectConfig, options = {}) {
+  const allowInProgress = options.allowInProgress ?? false;
+  const validStatus = allowInProgress
+    ? task?.status === "todo" || task?.status === "in_progress"
+    : task?.status === "todo";
+  if (!task || !validStatus || task.archivedAt != null) {
     return { eligible: false, reason: "NOT_TODO_OR_ARCHIVED" };
   }
 
@@ -848,10 +852,12 @@ export class AgentRunner {
     return { ...this.status(), restarted: true };
   }
 
-  async checkAndDispatch() {
+  async checkAndDispatch(options = {}) {
     if (this.closed) return;
     this.lastPollAt = Date.now();
     this.scheduleTimer();
+
+    const targetTaskId = typeof options?.taskId === "string" ? options.taskId : null;
 
     let entries = {};
     try {
@@ -879,6 +885,31 @@ export class AgentRunner {
       return;
     }
 
+    // If targetTaskId is provided, look up the task first to target its specific project
+    if (targetTaskId) {
+      try {
+        const apiBaseUrl = this.getResolvedApiBaseUrl();
+        const taskRes = await this.fetch(`${apiBaseUrl}/api/tasks/${encodeURIComponent(targetTaskId)}`, {
+          headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+        });
+        if (taskRes.ok) {
+          const { task } = await taskRes.json();
+          if (task && automations[task.projectId]) {
+            const config = automations[task.projectId];
+            if (config.status === "ACTIVE") {
+              const platform = config.agentPlatform ?? "codex";
+              if (platform === "claude" || platform === "agy") {
+                await this.dispatchProject(task.projectId, config, task);
+                return;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[AgentRunner] Failed to fetch target task ${targetTaskId}:`, err);
+      }
+    }
+
     const dispatches = [];
     for (const [projectId, config] of Object.entries(automations)) {
       if (this.closed) break;
@@ -894,7 +925,7 @@ export class AgentRunner {
     await Promise.all(dispatches);
   }
 
-  async dispatchProject(projectId, config) {
+  async dispatchProject(projectId, config, explicitTask = null) {
     if (this.projectRuns.has(projectId) || this.closed) return;
     this.projectRuns.add(projectId);
     const apiBaseUrl = this.getResolvedApiBaseUrl();
@@ -913,27 +944,38 @@ export class AgentRunner {
         project.workspacePath || config.workspacePath || "",
       );
 
-      // 2. Fetch todo tasks
-      const tasksRes = await this.fetch(
-        `${apiBaseUrl}/api/tasks?projectId=${encodeURIComponent(projectId)}&status=todo&archived=false`,
-        {
-          headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
-        },
-      );
-      if (!tasksRes.ok) return;
-      const tasksPayload = await tasksRes.json();
-      const tasks = tasksPayload.tasks || [];
-
-      // 3. Find first eligible task
       let targetTask = null;
       let targetPlatform = null;
 
-      for (const candidate of tasks) {
-        const evalResult = evaluateTaskEligibility(candidate, config);
-        if (evalResult.eligible) {
-          targetTask = candidate;
-          targetPlatform = evalResult.platform;
-          break;
+      if (explicitTask) {
+        // If an explicit task is targeted (e.g. dropped to in_progress)
+        if (!this.activeRuns.has(explicitTask.id)) {
+          const evalResult = evaluateTaskEligibility(explicitTask, config, { allowInProgress: true });
+          if (evalResult.eligible) {
+            targetTask = explicitTask;
+            targetPlatform = evalResult.platform;
+          }
+        }
+      } else {
+        // 2. Fetch todo tasks
+        const tasksRes = await this.fetch(
+          `${apiBaseUrl}/api/tasks?projectId=${encodeURIComponent(projectId)}&status=todo&archived=false`,
+          {
+            headers: { accept: "application/json", "x-taskboard-client": "agent-runner" },
+          },
+        );
+        if (!tasksRes.ok) return;
+        const tasksPayload = await tasksRes.json();
+        const tasks = tasksPayload.tasks || [];
+
+        // 3. Find first eligible task
+        for (const candidate of tasks) {
+          const evalResult = evaluateTaskEligibility(candidate, config);
+          if (evalResult.eligible) {
+            targetTask = candidate;
+            targetPlatform = evalResult.platform;
+            break;
+          }
         }
       }
 

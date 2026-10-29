@@ -1080,6 +1080,95 @@ test("DEFAULT_POLL_INTERVAL_MS is 5 minutes (300_000ms) and AgentRunner defaults
   runner.close();
 });
 
+test("AgentRunner checkAndDispatch can target a specific taskId when moved to in_progress", async () => {
+  let taskClaimed = false;
+  let taskVersion = 1;
+  const mockChild = new EventEmitter();
+  mockChild.stdout = new EventEmitter();
+  mockChild.stderr = new EventEmitter();
+  mockChild.stdin = { write: () => {}, end: () => {}, writable: true };
+  mockChild.kill = () => true;
+
+  const mockFetch = async (url, init = {}) => {
+    const urlStr = String(url);
+    if (urlStr.endsWith("/api/client-storage")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          entries: {
+            "taskboard.projectAutomations.v1": JSON.stringify({
+              "proj-target": {
+                status: "ACTIVE",
+                agentPlatform: "claude",
+                workspacePath: "/work/target",
+              },
+            }),
+          },
+        }),
+      };
+    }
+    if (urlStr.endsWith("/api/projects")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          projects: [{ id: "proj-target", name: "TargetProj", workspacePath: "/work/target" }],
+        }),
+      };
+    }
+    if (urlStr.includes("/api/tasks/task-target-99/move")) {
+      taskClaimed = true;
+      taskVersion += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          task: { id: "task-target-99", version: taskVersion, status: "in_progress" },
+        }),
+      };
+    }
+    if (urlStr.includes("/api/tasks/task-target-99/comments")) {
+      return { ok: true, status: 200, json: async () => ({ comments: [] }) };
+    }
+    if (urlStr.includes("/api/tasks/task-target-99")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          task: {
+            id: "task-target-99",
+            projectId: "proj-target",
+            status: "in_progress",
+            version: taskVersion,
+            relations: { blockedBy: [] },
+            labels: [],
+          },
+        }),
+      };
+    }
+    return { ok: false, status: 404, text: async () => "Not Found" };
+  };
+
+  const runner = new AgentRunner({
+    fetch: mockFetch,
+    spawnProcess: () => mockChild,
+    checkAgentAuth: async () => true,
+    pathExists: () => true,
+  });
+
+  const dispatchPromise = runner.checkAndDispatch({ taskId: "task-target-99" });
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.equal(taskClaimed, true);
+  assert.equal(runner.activeRuns.has("task-target-99"), true);
+
+  mockChild.emit("close", 0, null);
+  await dispatchPromise;
+  await runner.close();
+});
+
+
 
 
 
