@@ -73,6 +73,7 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     prompt: "Agy prompt",
     sessionId: "agy-456",
     config: { model: "gemini-3.8-flash-high" },
+    checkConversationExists: () => true,
   });
   assert.deepEqual(agyArgs, [
     "-p",
@@ -84,11 +85,27 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     "gemini-3.8-flash-high",
   ]);
 
+  const agyNewSessionArgs = buildAgentCliArgs({
+    platform: "agy",
+    prompt: "New session prompt",
+    sessionId: "non-existent-uuid",
+    config: { model: "gemini-3.8-flash-high" },
+    checkConversationExists: () => false,
+  });
+  assert.deepEqual(agyNewSessionArgs, [
+    "-p",
+    "New session prompt",
+    "--dangerously-skip-permissions",
+    "--model",
+    "gemini-3.8-flash-high",
+  ]);
+
   const agyLegacyArgs = buildAgentCliArgs({
     platform: "agy",
     prompt: "Legacy prompt",
     sessionId: "agy-789",
     config: { model: "gemini-2.5-pro", reasoningEffort: "medium" },
+    checkConversationExists: () => true,
   });
   assert.deepEqual(agyLegacyArgs, [
     "-p",
@@ -105,6 +122,7 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     prompt: "Cross model prompt",
     sessionId: "agy-999",
     config: { model: "sonnet", reasoningEffort: "medium" },
+    checkConversationExists: () => true,
   });
   assert.deepEqual(agyCrossModelArgs, [
     "-p",
@@ -121,6 +139,7 @@ test("buildAgentCliArgs constructs correct flags for claude and agy", () => {
     prompt: "Claude legacy prompt",
     sessionId: "agy-111",
     config: { model: "claude-sonnet-4-6", reasoningEffort: "high" },
+    checkConversationExists: () => true,
   });
   assert.deepEqual(agyClaudeLegacyArgs, [
     "-p",

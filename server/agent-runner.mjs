@@ -291,9 +291,23 @@ export function normalizeAgyModel(rawModel, rawEffort = "") {
 }
 
 /**
+ * Check if an AGY conversation file exists locally in ~/.gemini/antigravity/conversations/
+ */
+export function hasAgyConversationLocally(sessionId) {
+  if (!sessionId || typeof sessionId !== "string") return false;
+  try {
+    const home = process.env.HOME || os.homedir();
+    const dbPath = path.join(home, ".gemini", "antigravity", "conversations", `${sessionId}.db`);
+    return existsSync(dbPath);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Build CLI arguments for the target agent platform.
  */
-export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) {
+export function buildAgentCliArgs({ platform, prompt, sessionId, config = {}, checkConversationExists = hasAgyConversationLocally }) {
   if (platform === "claude") {
     const args = [
       "-p",
@@ -308,13 +322,14 @@ export function buildAgentCliArgs({ platform, prompt, sessionId, config = {} }) 
   }
 
   if (platform === "agy") {
-    const args = [
-      "-p",
-      prompt,
-      "--conversation",
-      sessionId,
-      "--dangerously-skip-permissions",
-    ];
+    const args = ["-p", prompt];
+    // Only pass --conversation if the conversation database already exists locally.
+    // If it does not exist (newly generated UUID), omit --conversation to let agy cleanly create it
+    // without triggering "warning: conversation ... not found".
+    if (sessionId && checkConversationExists(sessionId)) {
+      args.push("--conversation", sessionId);
+    }
+    args.push("--dangerously-skip-permissions");
     const validation = validateAgentModel("agy", config.model, config.reasoningEffort);
     args.push("--model", validation.model);
     return args;
@@ -1223,6 +1238,9 @@ export class AgentRunner {
             const trimmed = l.trim();
             if (/^Warning:\s*no stdin data received/i.test(trimmed)) {
               return "Agent 已就緒，正在解析任務與專案上下文…";
+            }
+            if (/^warning:\s*conversation\s*["'][^"']+["']\s*not found/i.test(trimmed)) {
+              return null;
             }
             return trimmed.slice(0, 300);
           }).filter(Boolean);
